@@ -1,0 +1,15 @@
+name: ghscanscope
+default_branch: main
+config:
+  description: "A local-first workbench for syncing, triaging, and finding patterns in GitHub code-scanning alerts across repositories."
+  license: MIT
+  language: go
+  release: release-go
+  justfile: true
+  status: active
+  release_github: false
+  codecov:
+    enabled: false
+  docs:
+    enabled: true
+    domain: ghscanscope.unitvectorylabs.com
