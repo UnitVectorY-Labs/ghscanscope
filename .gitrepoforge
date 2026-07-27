@@ -10,6 +10,8 @@ config:
   release_github: false
   codecov:
     enabled: false
+  gitignore:
+    - '*.db'
   docs:
     enabled: true
     domain: ghscanscope.unitvectorylabs.com
