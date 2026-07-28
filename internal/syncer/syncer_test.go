@@ -45,12 +45,19 @@ func alert(number int64, repo gh.Repository, rule string) gh.Alert {
 	a.Tool.Name = "CodeQL"
 	a.Rule.ID = rule
 	a.Rule.Name = "Test rule"
+	a.Rule.Description = "A detailed rule description"
+	a.Rule.Tags = []string{"security", "test"}
 	a.Rule.SecuritySeverity = "high"
+	a.Tool.Version = "2.20.0"
 	a.HTMLURL = "https://github.com/" + repo.FullName + "/security/code-scanning/"
 	a.CreatedAt = time.Now()
 	a.UpdatedAt = time.Now()
 	a.MostRecentInstance.Location.Path = "main.go"
 	a.MostRecentInstance.Location.StartLine = 4
+	a.MostRecentInstance.Message.Text = "Untrusted data reaches this location"
+	a.MostRecentInstance.Ref = "refs/heads/main"
+	a.MostRecentInstance.CommitSHA = "0123456789abcdef"
+	a.MostRecentInstance.AnalysisKey = ".github/workflows/codeql.yml:analyze"
 	return a
 }
 
@@ -78,6 +85,9 @@ func TestFullSyncCatalogsZeroAlertRepositoriesAndClosesMissing(t *testing.T) {
 	alerts, _ := s.OpenAlerts(ctx)
 	if len(alerts) != 1 {
 		t.Fatalf("wanted one alert, got %d", len(alerts))
+	}
+	if alerts[0].RuleDescription == "" || alerts[0].Message == "" || alerts[0].CommitSHA == "" || len(alerts[0].Tags) != 2 {
+		t.Fatalf("alert detail fields were not persisted: %+v", alerts[0])
 	}
 	fake.orgAlerts = nil
 	if _, err = sy.Sync(ctx, "acme", ""); err != nil {

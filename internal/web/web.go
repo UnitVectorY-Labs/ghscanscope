@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/syncer"
@@ -19,171 +21,682 @@ type Server struct {
 	template *template.Template
 	mu       sync.Mutex
 }
+
+type Stats struct {
+	Open, Critical, High, Medium, Low, Other int
+	AffectedRepositories, TotalRepositories  int
+	LastSync                                 *time.Time
+}
+
 type Group struct {
 	Tool, RuleID, RuleName, Severity string
 	RepositoryCount, AlertCount      int
+	UpdatedAt                        time.Time
 }
+
 type RepoView struct {
 	store.Repository
-	Org        string
-	AlertCount int
+	Org                                string
+	AlertCount                         int
+	Critical, High, Medium, Low, Other int
 }
+
+type severityCounts struct{ Critical, High, Medium, Low, Other int }
+
 type Page struct {
-	Organizations                          []store.Organization
-	Repositories                           []RepoView
-	Groups                                 []Group
-	Alerts                                 []store.Alert
-	Filters                                map[string]string
-	Tools, Rules, Severities, Visibilities []string
-	Notice, Error                          string
+	View, Title, Eyebrow, Notice  string
+	Organizations                 []store.Organization
+	Repositories                  []RepoView
+	AllRepositories               []RepoView
+	Groups                        []Group
+	Alerts                        []store.Alert
+	Repository                    *RepoView
+	Alert                         *store.Alert
+	Stats                         Stats
+	Filters                       map[string][]string
+	Tools, Rules                  []string
+	Severities, Visibilities      []string
+	Languages                     []string
+	RuleTool, RuleID, RuleName    string
+	RuleSeverity, RuleDescription string
+	RuleRepositoryCount           int
+	FilterOpen                    string
+	SortLinks                     map[string]string
+	RepoSortLinks                 map[string]string
+	AlertSortLinks                map[string]string
+	SortColumn, SortDirection     string
+}
+
+type dataSet struct {
+	Organizations []store.Organization
+	Repositories  []store.Repository
+	Alerts        []store.Alert
+	OrgNames      map[int64]string
+	RepoByID      map[int64]store.Repository
 }
 
 func New(s *store.Store, g syncer.GitHub) http.Handler {
-	srv := &Server{store: s, github: g, template: template.Must(template.New("dashboard").Funcs(template.FuncMap{"timefmt": func(v any) string {
-		if v == nil {
-			return "Never"
-		}
-		return fmt.Sprint(v)
-	}}).Parse(pageTemplate))}
+	srv := &Server{store: s, github: g, template: template.Must(template.New("page").Funcs(template.FuncMap{
+		"shortsha": func(value string) string {
+			if len(value) > 10 {
+				return value[:10]
+			}
+			return value
+		},
+		"severityClass": severityClass,
+		"selected":      selected,
+		"codeURL":       codeURL,
+	}).Parse(pageTemplate))}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", srv.dashboard)
-	mux.HandleFunc("POST /sync", srv.sync)
+	mux.HandleFunc("GET /", srv.home)
+	mux.HandleFunc("GET /alerts", srv.alerts)
+	mux.HandleFunc("GET /alerts/{id}", srv.alertDetail)
+	mux.HandleFunc("GET /repositories", srv.repositories)
+	mux.HandleFunc("GET /repositories/{id}", srv.repositoryDetail)
+	mux.HandleFunc("GET /rules", srv.ruleDetail)
+	mux.HandleFunc("POST /sync", srv.syncOrganization)
+	mux.HandleFunc("POST /repositories/{id}/sync", srv.syncRepository)
 	return mux
 }
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	page, err := s.buildPage(r)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := s.template.Execute(w, page); err != nil {
-		http.Error(w, err.Error(), 500)
-	}
+func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/alerts", http.StatusTemporaryRedirect)
 }
-func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+
+func (s *Server) load(r *http.Request) (dataSet, error) {
+	ctx := r.Context()
+	organizations, err := s.store.Organizations(ctx)
+	if err != nil {
+		return dataSet{}, err
+	}
+	allRepositories, err := s.store.Repositories(ctx)
+	if err != nil {
+		return dataSet{}, err
+	}
+	allAlerts, err := s.store.OpenAlerts(ctx)
+	if err != nil {
+		return dataSet{}, err
+	}
+	d := dataSet{Organizations: organizations, OrgNames: map[int64]string{}, RepoByID: map[int64]store.Repository{}}
+	for _, organization := range organizations {
+		d.OrgNames[organization.ID] = organization.Login
+	}
+	active := map[int64]bool{}
+	for _, repository := range allRepositories {
+		if repository.Archived {
+			continue
+		}
+		d.Repositories = append(d.Repositories, repository)
+		d.RepoByID[repository.ID] = repository
+		active[repository.ID] = true
+	}
+	for _, alert := range allAlerts {
+		if active[alert.RepositoryID] {
+			d.Alerts = append(d.Alerts, alert)
+		}
+	}
+	return d, nil
+}
+
+func (s *Server) alerts(w http.ResponseWriter, r *http.Request) {
+	d, err := s.load(r)
+	if err != nil {
+		s.serverError(w, err)
 		return
 	}
-	org, repo := strings.TrimSpace(r.FormValue("org")), strings.TrimSpace(r.FormValue("repo"))
-	if org == "" {
-		http.Error(w, "organization is required", 400)
+	filters := queryFilters(r)
+	filtered := filterAlerts(d, filters)
+	groups := groupAlerts(filtered)
+	sortColumn, sortDirection := sortChoice(r, "sort", "dir", "severity", "desc")
+	sortGroups(groups, sortColumn, sortDirection)
+	page := s.basePage(d, filters, filtered)
+	page.View, page.Title, page.Eyebrow = "alerts", "Alert groups", "Explore equivalent findings"
+	page.Groups = groups
+	page.FilterOpen = r.URL.Query().Get("filter_open")
+	page.SortColumn, page.SortDirection = sortColumn, sortDirection
+	page.SortLinks = sortLinks(r, "sort", "dir", []string{"rule", "severity", "tool", "repositories", "alerts", "updated"})
+	if r.URL.Query().Get("sync") == "success" {
+		page.Notice = "Organization data refreshed successfully."
+	}
+	s.render(w, page)
+}
+
+func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
+	d, err := s.load(r)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	filters := queryFilters(r)
+	counts := repositoryCounts(d.Alerts)
+	severityCounts := repositorySeverityCounts(d.Alerts)
+	matchingRepositories := map[int64]bool{}
+	var repositoryViews []RepoView
+	for _, repository := range d.Repositories {
+		if !matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) {
+			continue
+		}
+		matchingRepositories[repository.ID] = true
+		view := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: counts[repository.ID]}
+		applySeverityCounts(&view, severityCounts[repository.ID])
+		repositoryViews = append(repositoryViews, view)
+	}
+	statsAlerts := make([]store.Alert, 0)
+	for _, alert := range d.Alerts {
+		if matchingRepositories[alert.RepositoryID] {
+			statsAlerts = append(statsAlerts, alert)
+		}
+	}
+	page := s.basePage(d, filters, statsAlerts)
+	page.View, page.Title, page.Eyebrow = "repositories", "Repositories", "Coverage across your estate"
+	page.Repositories = repositoryViews
+	sortColumn, sortDirection := sortChoice(r, "sort", "dir", "high", "desc")
+	sortRepositories(page.Repositories, sortColumn, sortDirection)
+	page.SortColumn, page.SortDirection = sortColumn, sortDirection
+	page.FilterOpen = r.URL.Query().Get("filter_open")
+	page.SortLinks = sortLinks(r, "sort", "dir", []string{"repository", "organization", "visibility", "language", "critical", "high", "medium", "low"})
+	s.render(w, page)
+}
+
+func (s *Server) repositoryDetail(w http.ResponseWriter, r *http.Request) {
+	s.repositoryPage(w, r, "")
+}
+
+func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	d, err := s.load(r)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	repository, ok := d.RepoByID[id]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	filters := queryFilters(r)
+	alerts := make([]store.Alert, 0)
+	for _, alert := range d.Alerts {
+		if alert.RepositoryID == id && matchesAlert(filters, alert, repository) {
+			alerts = append(alerts, alert)
+		}
+	}
+	sortColumn, sortDirection := sortChoice(r, "sort", "dir", "severity", "desc")
+	sortAlerts(alerts, sortColumn, sortDirection)
+	page := s.basePage(d, filters, alerts)
+	view := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: len(alerts)}
+	page.View, page.Title, page.Eyebrow = "repository", repository.FullName, "Repository details"
+	page.Repository, page.Alerts, page.Notice = &view, alerts, notice
+	page.FilterOpen = r.URL.Query().Get("filter_open")
+	page.Stats.TotalRepositories = 1
+	page.SortColumn, page.SortDirection = sortColumn, sortDirection
+	page.SortLinks = sortLinks(r, "sort", "dir", []string{"rule", "severity", "tool", "location", "updated"})
+	s.render(w, page)
+}
+
+func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
+	tool, ruleID := strings.TrimSpace(r.URL.Query().Get("tool")), strings.TrimSpace(r.URL.Query().Get("rule"))
+	if tool == "" || ruleID == "" {
+		http.Error(w, "tool and rule are required", http.StatusBadRequest)
+		return
+	}
+	d, err := s.load(r)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	filters := queryFilters(r)
+	delete(filters, "tool")
+	delete(filters, "rule")
+	allOccurrences := make([]store.Alert, 0)
+	for _, alert := range d.Alerts {
+		if alert.Tool == tool && alert.RuleID == ruleID {
+			allOccurrences = append(allOccurrences, alert)
+		}
+	}
+	if len(allOccurrences) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	alerts := make([]store.Alert, 0, len(allOccurrences))
+	for _, alert := range allOccurrences {
+		if matchesAlert(filters, alert, d.RepoByID[alert.RepositoryID]) {
+			alerts = append(alerts, alert)
+		}
+	}
+	alertSort, alertDirection := sortChoice(r, "alert_sort", "alert_dir", "repository", "asc")
+	sortAlerts(alerts, alertSort, alertDirection)
+	page := s.basePage(d, filters, alerts)
+	representative := allOccurrences[0]
+	page.View, page.Title, page.Eyebrow = "rule", representative.RuleName, "Equivalent finding"
+	page.RuleTool, page.RuleID, page.RuleName = tool, ruleID, representative.RuleName
+	page.RuleSeverity, page.RuleDescription = representative.Severity, representative.RuleDescription
+	page.Alerts = alerts
+	page.RuleRepositoryCount = len(repositoryCounts(alerts))
+	page.FilterOpen = r.URL.Query().Get("filter_open")
+	page.SortColumn, page.SortDirection = alertSort, alertDirection
+	page.AlertSortLinks = sortLinks(r, "alert_sort", "alert_dir", []string{"repository", "location", "message", "updated"})
+	s.render(w, page)
+}
+
+func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	d, err := s.load(r)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	var selectedAlert *store.Alert
+	for i := range d.Alerts {
+		if d.Alerts[i].ID == id {
+			selectedAlert = &d.Alerts[i]
+			break
+		}
+	}
+	if selectedAlert == nil {
+		http.NotFound(w, r)
+		return
+	}
+	repository := d.RepoByID[selectedAlert.RepositoryID]
+	repoView := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: repositoryCounts(d.Alerts)[repository.ID]}
+	page := s.basePage(d, map[string][]string{}, []store.Alert{*selectedAlert})
+	page.View, page.Title, page.Eyebrow = "alert", selectedAlert.RuleName, "Alert details"
+	page.Alert, page.Repository = selectedAlert, &repoView
+	page.Stats.TotalRepositories = 1
+	s.render(w, page)
+}
+
+func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	org := strings.TrimSpace(r.FormValue("org"))
+	organizations, err := s.store.Organizations(r.Context())
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	known := false
+	for _, organization := range organizations {
+		if strings.EqualFold(organization.Login, org) {
+			org = organization.Login
+			known = true
+			break
+		}
+	}
+	if !known {
+		http.Error(w, "choose a stored organization", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
-	_, err := (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), org, repo)
+	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), org, "")
 	s.mu.Unlock()
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	http.Redirect(w, r, "/?org="+org, http.StatusSeeOther)
+	http.Redirect(w, r, "/alerts?sync=success", http.StatusSeeOther)
 }
 
-func (s *Server) buildPage(r *http.Request) (Page, error) {
-	ctx := r.Context()
-	orgs, err := s.store.Organizations(ctx)
+func (s *Server) syncRepository(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		return Page{}, err
+		http.NotFound(w, r)
+		return
 	}
-	repos, err := s.store.Repositories(ctx)
+	d, err := s.load(r)
 	if err != nil {
-		return Page{}, err
+		s.serverError(w, err)
+		return
 	}
-	alerts, err := s.store.OpenAlerts(ctx)
+	repository, ok := d.RepoByID[id]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), d.OrgNames[repository.OrgID], repository.FullName)
+	s.mu.Unlock()
 	if err != nil {
-		return Page{}, err
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
 	}
-	f := map[string]string{}
-	for _, key := range []string{"org", "repo", "severity", "tool", "rule", "visibility", "archived", "group_tool", "group_rule"} {
-		f[key] = r.URL.Query().Get(key)
+	s.repositoryPage(w, r, "Repository data refreshed successfully.")
+}
+
+func (s *Server) basePage(d dataSet, filters map[string][]string, scopedAlerts []store.Alert) Page {
+	tools, rules, severities, visibilities, languages := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, alert := range d.Alerts {
+		tools[alert.Tool], rules[alert.RuleID], severities[alert.Severity] = true, true, true
 	}
-	orgNames := map[int64]string{}
-	for _, o := range orgs {
-		orgNames[o.ID] = o.Login
+	counts := repositoryCounts(d.Alerts)
+	page := Page{Organizations: d.Organizations, Stats: calculateStats(d, filters, scopedAlerts), Filters: filters}
+	for _, repository := range d.Repositories {
+		visibilities[repository.Visibility], languages[repository.Language] = true, true
+		page.AllRepositories = append(page.AllRepositories, RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: counts[repository.ID]})
 	}
-	repoMap := map[int64]store.Repository{}
-	for _, repo := range repos {
-		repoMap[repo.ID] = repo
-	}
-	setTool, setRule, setSeverity, setVisibility := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, a := range alerts {
-		setTool[a.Tool] = true
-		setRule[a.RuleID] = true
-		setSeverity[a.Severity] = true
-	}
-	for _, repo := range repos {
-		setVisibility[repo.Visibility] = true
-	}
-	filtered := make([]store.Alert, 0)
-	for _, a := range alerts {
-		repo := repoMap[a.RepositoryID]
-		if !match(f, a, repo) {
-			continue
-		}
-		filtered = append(filtered, a)
-	}
+	page.Tools, page.Rules, page.Severities = keys(tools), keys(rules), severityKeys(severities)
+	page.Visibilities, page.Languages = keys(visibilities), keys(languages)
+	return page
+}
+
+func groupAlerts(alerts []store.Alert) []Group {
 	groups := map[string]*Group{}
-	repoSets := map[string]map[int64]bool{}
-	for _, a := range filtered {
-		key := a.Tool + "\x00" + a.RuleID
-		g := groups[key]
-		if g == nil {
-			g = &Group{Tool: a.Tool, RuleID: a.RuleID, RuleName: a.RuleName, Severity: a.Severity}
-			groups[key] = g
-			repoSets[key] = map[int64]bool{}
+	repositories := map[string]map[int64]bool{}
+	for _, alert := range alerts {
+		key := alert.Tool + "\x00" + alert.RuleID
+		group := groups[key]
+		if group == nil {
+			group = &Group{Tool: alert.Tool, RuleID: alert.RuleID, RuleName: alert.RuleName, Severity: alert.Severity, UpdatedAt: alert.UpdatedAt}
+			groups[key], repositories[key] = group, map[int64]bool{}
 		}
-		g.AlertCount++
-		repoSets[key][a.RepositoryID] = true
-		g.RepositoryCount = len(repoSets[key])
+		group.AlertCount++
+		repositories[key][alert.RepositoryID] = true
+		group.RepositoryCount = len(repositories[key])
+		if severityRank(alert.Severity) > severityRank(group.Severity) {
+			group.Severity = alert.Severity
+		}
+		if alert.UpdatedAt.After(group.UpdatedAt) {
+			group.UpdatedAt = alert.UpdatedAt
+		}
 	}
-	groupList := make([]Group, 0, len(groups))
-	for _, g := range groups {
-		groupList = append(groupList, *g)
+	out := make([]Group, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, *group)
 	}
-	sort.Slice(groupList, func(i, j int) bool {
-		if groupList[i].AlertCount != groupList[j].AlertCount {
-			return groupList[i].AlertCount > groupList[j].AlertCount
-		}
-		return groupList[i].Tool+groupList[i].RuleID < groupList[j].Tool+groupList[j].RuleID
-	})
-	repoCounts := map[int64]int{}
-	for _, a := range filtered {
-		repoCounts[a.RepositoryID]++
-	}
-	var repoViews []RepoView
-	for _, repo := range repos {
-		if f["org"] != "" && !strings.EqualFold(orgNames[repo.OrgID], f["org"]) {
-			continue
-		}
-		if f["repo"] != "" && !strings.EqualFold(repo.FullName, f["repo"]) {
-			continue
-		}
-		if f["visibility"] != "" && repo.Visibility != f["visibility"] {
-			continue
-		}
-		if f["archived"] != "" && strconv.FormatBool(repo.Archived) != f["archived"] {
-			continue
-		}
-		repoViews = append(repoViews, RepoView{Repository: repo, Org: orgNames[repo.OrgID], AlertCount: repoCounts[repo.ID]})
-	}
-	drill := filtered
-	if f["group_tool"] != "" || f["group_rule"] != "" {
-		drill = nil
-		for _, a := range filtered {
-			if a.Tool == f["group_tool"] && a.RuleID == f["group_rule"] {
-				drill = append(drill, a)
+	return out
+}
+
+func queryFilters(r *http.Request) map[string][]string {
+	filters := map[string][]string{}
+	for _, key := range []string{"org", "repo", "severity", "tool", "rule", "visibility", "language"} {
+		for _, value := range r.URL.Query()[key] {
+			if value = strings.TrimSpace(value); value != "" {
+				filters[key] = append(filters[key], value)
 			}
 		}
-	} else {
-		drill = nil
 	}
-	return Page{Organizations: orgs, Repositories: repoViews, Groups: groupList, Alerts: drill, Filters: f, Tools: keys(setTool), Rules: keys(setRule), Severities: keys(setSeverity), Visibilities: keys(setVisibility)}, nil
+	return filters
 }
-func match(f map[string]string, a store.Alert, r store.Repository) bool {
-	return (f["org"] == "" || strings.EqualFold(a.Org, f["org"])) && (f["repo"] == "" || strings.EqualFold(a.Repository, f["repo"])) && (f["severity"] == "" || a.Severity == f["severity"]) && (f["tool"] == "" || a.Tool == f["tool"]) && (f["rule"] == "" || a.RuleID == f["rule"]) && (f["visibility"] == "" || r.Visibility == f["visibility"]) && (f["archived"] == "" || strconv.FormatBool(r.Archived) == f["archived"])
+
+func filterAlerts(d dataSet, filters map[string][]string) []store.Alert {
+	out := make([]store.Alert, 0, len(d.Alerts))
+	for _, alert := range d.Alerts {
+		if matchesAlert(filters, alert, d.RepoByID[alert.RepositoryID]) {
+			out = append(out, alert)
+		}
+	}
+	return out
 }
+
+func matchesAlert(filters map[string][]string, alert store.Alert, repository store.Repository) bool {
+	return allows(filters["org"], alert.Org) && allows(filters["repo"], alert.Repository) &&
+		allows(filters["severity"], alert.Severity) && allows(filters["tool"], alert.Tool) &&
+		allows(filters["rule"], alert.RuleID) && allows(filters["visibility"], repository.Visibility) &&
+		allows(filters["language"], repository.Language)
+}
+
+func matchesRepository(filters map[string][]string, repository store.Repository, org string) bool {
+	return allows(filters["org"], org) && allows(filters["repo"], repository.FullName) &&
+		allows(filters["visibility"], repository.Visibility) && allows(filters["language"], repository.Language)
+}
+
+func allows(values []string, candidate string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, value := range values {
+		if strings.EqualFold(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func selected(values []string, candidate string) bool { return allowsSelected(values, candidate) }
+
+func allowsSelected(values []string, candidate string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func calculateStats(d dataSet, filters map[string][]string, alerts []store.Alert) Stats {
+	stats := Stats{Open: len(alerts)}
+	repositories := map[int64]bool{}
+	for _, alert := range alerts {
+		repositories[alert.RepositoryID] = true
+		switch severityClass(alert.Severity) {
+		case "critical":
+			stats.Critical++
+		case "high":
+			stats.High++
+		case "medium":
+			stats.Medium++
+		case "low":
+			stats.Low++
+		default:
+			stats.Other++
+		}
+	}
+	stats.AffectedRepositories = len(repositories)
+	for _, repository := range d.Repositories {
+		if matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) {
+			stats.TotalRepositories++
+		}
+	}
+	for _, organization := range d.Organizations {
+		if !allows(filters["org"], organization.Login) {
+			continue
+		}
+		if organization.LastSync != nil && (stats.LastSync == nil || organization.LastSync.After(*stats.LastSync)) {
+			value := *organization.LastSync
+			stats.LastSync = &value
+		}
+	}
+	return stats
+}
+
+func repositoryCounts(alerts []store.Alert) map[int64]int {
+	counts := map[int64]int{}
+	for _, alert := range alerts {
+		counts[alert.RepositoryID]++
+	}
+	return counts
+}
+
+func repositorySeverityCounts(alerts []store.Alert) map[int64]severityCounts {
+	counts := map[int64]severityCounts{}
+	for _, alert := range alerts {
+		value := counts[alert.RepositoryID]
+		switch severityClass(alert.Severity) {
+		case "critical":
+			value.Critical++
+		case "high":
+			value.High++
+		case "medium":
+			value.Medium++
+		case "low":
+			value.Low++
+		default:
+			value.Other++
+		}
+		counts[alert.RepositoryID] = value
+	}
+	return counts
+}
+
+func applySeverityCounts(view *RepoView, counts severityCounts) {
+	view.Critical, view.High, view.Medium, view.Low, view.Other = counts.Critical, counts.High, counts.Medium, counts.Low, counts.Other
+}
+
+func sortChoice(r *http.Request, sortKey, directionKey, defaultSort, defaultDirection string) (string, string) {
+	column, direction := r.URL.Query().Get(sortKey), r.URL.Query().Get(directionKey)
+	if column == "" {
+		column, direction = defaultSort, defaultDirection
+	}
+	if direction != "asc" && direction != "desc" {
+		direction = defaultDirection
+	}
+	return column, direction
+}
+
+func sortLinks(r *http.Request, sortKey, directionKey string, columns []string) map[string]string {
+	currentColumn, currentDirection := r.URL.Query().Get(sortKey), r.URL.Query().Get(directionKey)
+	links := map[string]string{}
+	for _, column := range columns {
+		values := cloneValues(r.URL.Query())
+		direction := "asc"
+		if currentColumn == column && currentDirection != "desc" {
+			direction = "desc"
+		}
+		values.Set(sortKey, column)
+		values.Set(directionKey, direction)
+		links[column] = r.URL.Path + "?" + values.Encode()
+	}
+	return links
+}
+
+func cloneValues(source url.Values) url.Values {
+	clone := url.Values{}
+	for key, values := range source {
+		clone[key] = append([]string(nil), values...)
+	}
+	return clone
+}
+
+func sortGroups(groups []Group, column, direction string) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		left, right := groups[i], groups[j]
+		comparison := 0
+		switch column {
+		case "rule":
+			comparison = strings.Compare(strings.ToLower(left.RuleName+left.RuleID), strings.ToLower(right.RuleName+right.RuleID))
+		case "tool":
+			comparison = strings.Compare(strings.ToLower(left.Tool), strings.ToLower(right.Tool))
+		case "repositories":
+			comparison = left.RepositoryCount - right.RepositoryCount
+		case "alerts":
+			comparison = left.AlertCount - right.AlertCount
+		case "updated":
+			comparison = left.UpdatedAt.Compare(right.UpdatedAt)
+		default:
+			comparison = severityRank(left.Severity) - severityRank(right.Severity)
+			if comparison == 0 {
+				comparison = left.AlertCount - right.AlertCount
+			}
+		}
+		return ordered(comparison, direction)
+	})
+}
+
+func sortRepositories(repositories []RepoView, column, direction string) {
+	sort.SliceStable(repositories, func(i, j int) bool {
+		left, right := repositories[i], repositories[j]
+		comparison := 0
+		switch column {
+		case "organization":
+			comparison = strings.Compare(strings.ToLower(left.Org), strings.ToLower(right.Org))
+		case "visibility":
+			comparison = strings.Compare(left.Visibility, right.Visibility)
+		case "language":
+			comparison = strings.Compare(strings.ToLower(left.Language), strings.ToLower(right.Language))
+		case "alerts":
+			comparison = left.AlertCount - right.AlertCount
+		case "critical":
+			comparison = left.Critical - right.Critical
+		case "high":
+			comparison = left.High - right.High
+		case "medium":
+			comparison = left.Medium - right.Medium
+		case "low":
+			comparison = left.Low - right.Low
+		default:
+			comparison = strings.Compare(strings.ToLower(left.FullName), strings.ToLower(right.FullName))
+		}
+		return ordered(comparison, direction)
+	})
+}
+
+func sortAlerts(alerts []store.Alert, column, direction string) {
+	sort.SliceStable(alerts, func(i, j int) bool {
+		left, right := alerts[i], alerts[j]
+		comparison := 0
+		switch column {
+		case "rule":
+			comparison = strings.Compare(strings.ToLower(left.RuleName+left.RuleID), strings.ToLower(right.RuleName+right.RuleID))
+		case "tool":
+			comparison = strings.Compare(strings.ToLower(left.Tool), strings.ToLower(right.Tool))
+		case "repository":
+			comparison = strings.Compare(strings.ToLower(left.Repository), strings.ToLower(right.Repository))
+		case "location":
+			comparison = strings.Compare(strings.ToLower(left.Path), strings.ToLower(right.Path))
+		case "message":
+			comparison = strings.Compare(strings.ToLower(left.Message), strings.ToLower(right.Message))
+		case "updated":
+			comparison = left.UpdatedAt.Compare(right.UpdatedAt)
+		default:
+			comparison = severityRank(left.Severity) - severityRank(right.Severity)
+		}
+		return ordered(comparison, direction)
+	})
+}
+
+func ordered(comparison int, direction string) bool {
+	if direction == "desc" {
+		return comparison > 0
+	}
+	return comparison < 0
+}
+
+func severityRank(value string) int {
+	switch strings.ToLower(value) {
+	case "critical":
+		return 5
+	case "high", "error":
+		return 4
+	case "medium", "warning":
+		return 3
+	case "low", "note", "recommendation":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func severityClass(value string) string {
+	switch severityRank(value) {
+	case 5:
+		return "critical"
+	case 4:
+		return "high"
+	case 3:
+		return "medium"
+	case 2:
+		return "low"
+	default:
+		return "other"
+	}
+}
+
+func severityKeys(set map[string]bool) []string {
+	values := keys(set)
+	sort.SliceStable(values, func(i, j int) bool { return severityRank(values[i]) > severityRank(values[j]) })
+	return values
+}
+
 func keys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for key := range set {
@@ -195,12 +708,38 @@ func keys(set map[string]bool) []string {
 	return out
 }
 
-const pageTemplate = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ghscanscope</title><script src="https://unpkg.com/htmx.org@2.0.4"></script><style>
-:root{font-family:ui-sans-serif,system-ui;color:#172033;background:#f6f8fb}body{margin:0}header{background:#172033;color:white;padding:1rem 2rem;display:flex;align-items:center;justify-content:space-between}main{max-width:1400px;margin:auto;padding:1.5rem}.card{background:white;border:1px solid #dbe1ea;border-radius:9px;padding:1rem;margin-bottom:1rem;box-shadow:0 1px 2px #0001}.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem}.filters label,.sync label{font-size:.78rem;color:#536174}.filters select,.sync select,.sync input{display:block;width:100%;box-sizing:border-box;padding:.5rem;margin-top:.25rem;border:1px solid #bdc6d3;border-radius:5px;background:white}button,.button{background:#2857c5;color:white;border:0;border-radius:5px;padding:.55rem .9rem;text-decoration:none;cursor:pointer}table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;padding:.65rem;border-bottom:1px solid #e5e9ef}th{color:#536174}a{color:#2857c5}.pill{padding:.15rem .4rem;border-radius:1rem;background:#eef2f8;font-size:.78rem}.muted{color:#68758a}.sync{display:flex;gap:.75rem;align-items:end}.sync label{min-width:200px}h1,h2{margin-top:0}details{margin-bottom:1rem}@media(max-width:700px){header{padding:1rem}main{padding:.75rem}.sync{display:block}.sync>*{margin-bottom:.5rem}.scroll{overflow:auto}}
-</style></head><body><header><strong>ghscanscope</strong><span>Local code-scanning explorer</span></header><main>
-<section class="card"><h2>Refresh data</h2><form class="sync" method="post" action="/sync" hx-post="/sync" hx-target="body" hx-push-url="true" hx-disabled-elt="button"><label>Organization<select name="org" required><option value="">Choose…</option>{{range .Organizations}}<option value="{{.Login}}">{{.Login}}</option>{{end}}</select></label><label>Repository (optional)<input name="repo" placeholder="OWNER/REPO"></label><button type="submit">Sync from GitHub</button></form><p class="muted">{{range .Organizations}}<strong>{{.Login}}</strong>: {{if .LastSync}}{{.LastSync.Format "2006-01-02 15:04:05 MST"}}{{else}}Never{{end}} ({{.LastStatus}})&nbsp; {{end}}</p></section>
-<section class="card"><h2>Filters</h2><form method="get" class="filters"><label>Organization<select name="org"><option value="">All</option>{{range .Organizations}}<option value="{{.Login}}" {{if eq $.Filters.org .Login}}selected{{end}}>{{.Login}}</option>{{end}}</select></label><label>Repository<select name="repo"><option value="">All</option>{{range .Repositories}}<option value="{{.FullName}}" {{if eq $.Filters.repo .FullName}}selected{{end}}>{{.FullName}}</option>{{end}}</select></label><label>Severity<select name="severity"><option value="">All</option>{{range .Severities}}<option {{if eq $.Filters.severity .}}selected{{end}}>{{.}}</option>{{end}}</select></label><label>Tool<select name="tool"><option value="">All</option>{{range .Tools}}<option {{if eq $.Filters.tool .}}selected{{end}}>{{.}}</option>{{end}}</select></label><label>Rule<select name="rule"><option value="">All</option>{{range .Rules}}<option {{if eq $.Filters.rule .}}selected{{end}}>{{.}}</option>{{end}}</select></label><label>Visibility<select name="visibility"><option value="">All</option>{{range .Visibilities}}<option {{if eq $.Filters.visibility .}}selected{{end}}>{{.}}</option>{{end}}</select></label><label>Archived<select name="archived"><option value="">All</option><option value="false" {{if eq .Filters.archived "false"}}selected{{end}}>Active</option><option value="true" {{if eq .Filters.archived "true"}}selected{{end}}>Archived</option></select></label><div><button type="submit">Apply filters</button></div></form></section>
-<section class="card"><h2>Alert groups <span class="pill">{{len .Groups}}</span></h2><div class="scroll"><table><thead><tr><th>Tool</th><th>Rule</th><th>Name</th><th>Severity</th><th>Repositories</th><th>Alerts</th><th></th></tr></thead><tbody>{{range .Groups}}<tr><td>{{.Tool}}</td><td><code>{{.RuleID}}</code></td><td>{{.RuleName}}</td><td><span class="pill">{{.Severity}}</span></td><td>{{.RepositoryCount}}</td><td>{{.AlertCount}}</td><td><a href="?org={{urlquery $.Filters.org}}&repo={{urlquery $.Filters.repo}}&severity={{urlquery $.Filters.severity}}&tool={{urlquery $.Filters.tool}}&rule={{urlquery $.Filters.rule}}&visibility={{urlquery $.Filters.visibility}}&archived={{urlquery $.Filters.archived}}&group_tool={{urlquery .Tool}}&group_rule={{urlquery .RuleID}}#alerts">View</a></td></tr>{{else}}<tr><td colspan="7" class="muted">No open alerts match these filters.</td></tr>{{end}}</tbody></table></div></section>
-{{if or .Filters.group_tool .Filters.group_rule}}<section class="card" id="alerts"><h2>Alerts: {{.Filters.group_tool}} / {{.Filters.group_rule}}</h2><div class="scroll"><table><thead><tr><th>Repository</th><th>Severity</th><th>Location</th><th>Updated</th><th></th></tr></thead><tbody>{{range .Alerts}}<tr><td>{{.Repository}}</td><td>{{.Severity}}</td><td><code>{{.Path}}{{if .StartLine}}:{{.StartLine}}{{end}}</code></td><td>{{.UpdatedAt.Format "2006-01-02"}}</td><td><a href="{{.URL}}" target="_blank" rel="noopener">GitHub ↗</a></td></tr>{{end}}</tbody></table></div></section>{{end}}
-<section class="card"><h2>Repositories <span class="pill">{{len .Repositories}}</span></h2><div class="scroll"><table><thead><tr><th>Repository</th><th>Description</th><th>Visibility</th><th>Language</th><th>Archived</th><th>Open alerts</th></tr></thead><tbody>{{range .Repositories}}<tr><td><a href="{{.URL}}" target="_blank" rel="noopener">{{.FullName}}</a></td><td>{{.Description}}</td><td>{{.Visibility}}</td><td>{{.Language}}</td><td>{{if .Archived}}Yes{{else}}No{{end}}</td><td>{{.AlertCount}}</td></tr>{{else}}<tr><td colspan="6" class="muted">No repositories stored. Run a sync to begin.</td></tr>{{end}}</tbody></table></div></section>
-</main></body></html>`
+func codeURL(alert store.Alert) string {
+	if alert.RepositoryURL == "" || alert.Path == "" {
+		return alert.URL
+	}
+	revision := alert.CommitSHA
+	if revision == "" {
+		revision = strings.TrimPrefix(alert.Ref, "refs/heads/")
+	}
+	if revision == "" {
+		revision = "HEAD"
+	}
+	parts := strings.Split(alert.Path, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	result := strings.TrimRight(alert.RepositoryURL, "/") + "/blob/" + url.PathEscape(revision) + "/" + strings.Join(parts, "/")
+	if alert.StartLine > 0 {
+		result += "#L" + strconv.Itoa(alert.StartLine)
+		if alert.EndLine > alert.StartLine {
+			result += "-L" + strconv.Itoa(alert.EndLine)
+		}
+	}
+	return result
+}
+
+func (s *Server) render(w http.ResponseWriter, page Page) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.template.Execute(w, page); err != nil {
+		s.serverError(w, err)
+	}
+}
+
+func (s *Server) serverError(w http.ResponseWriter, err error) {
+	http.Error(w, fmt.Sprintf("ghscanscope: %v", err), http.StatusInternalServerError)
+}

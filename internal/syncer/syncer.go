@@ -124,7 +124,18 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 			severity = a.Rule.Severity
 		}
 		loc := a.MostRecentInstance.Location
-		stored = append(stored, store.Alert{OrgID: orgID, RepositoryID: repoID, GitHubID: a.Number, Tool: a.Tool.Name, RuleID: a.Rule.ID, RuleName: a.Rule.Name, Severity: severity, Path: loc.Path, StartLine: loc.StartLine, EndLine: loc.EndLine, StartColumn: loc.StartColumn, EndColumn: loc.EndColumn, URL: a.HTMLURL, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, Open: true})
+		stored = append(stored, store.Alert{
+			OrgID: orgID, RepositoryID: repoID, GitHubID: a.Number,
+			Tool: a.Tool.Name, ToolVersion: a.Tool.Version, ToolGUID: a.Tool.GUID,
+			RuleID: a.Rule.ID, RuleName: a.Rule.Name, RuleDescription: a.Rule.Description,
+			Tags: a.Rule.Tags, Severity: severity,
+			Message: a.MostRecentInstance.Message.Text, Ref: a.MostRecentInstance.Ref,
+			CommitSHA: a.MostRecentInstance.CommitSHA, AnalysisKey: a.MostRecentInstance.AnalysisKey,
+			Environment: a.MostRecentInstance.Environment, Category: a.MostRecentInstance.Category,
+			Path: loc.Path, StartLine: loc.StartLine, EndLine: loc.EndLine,
+			StartColumn: loc.StartColumn, EndColumn: loc.EndColumn,
+			URL: a.HTMLURL, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, Open: true,
+		})
 	}
 	if err = s.Store.ReplaceOpenAlerts(ctx, orgID, targetRepoID, stored); err != nil {
 		return result, err

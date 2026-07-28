@@ -40,14 +40,26 @@ type Alert struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	HTMLURL   string    `json:"html_url"`
 	Tool      struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		GUID    string `json:"guid"`
 	} `json:"tool"`
 	Rule struct {
 		ID, Name, Severity string
-		SecuritySeverity   string `json:"security_severity_level"`
+		Description        string   `json:"description"`
+		SecuritySeverity   string   `json:"security_severity_level"`
+		Tags               []string `json:"tags"`
 	} `json:"rule"`
 	Repository         Repository `json:"repository"`
 	MostRecentInstance struct {
+		Ref         string `json:"ref"`
+		CommitSHA   string `json:"commit_sha"`
+		AnalysisKey string `json:"analysis_key"`
+		Environment string `json:"environment"`
+		Category    string `json:"category"`
+		Message     struct {
+			Text string `json:"text"`
+		} `json:"message"`
 		Location struct {
 			Path        string `json:"path"`
 			StartLine   int    `json:"start_line"`
