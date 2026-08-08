@@ -131,3 +131,5 @@ go.work
 
 ## Additional Ignore Patterns
 *.db
+.ghscanscope.db-shm
+.ghscanscope.db-wal

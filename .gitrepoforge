@@ -12,6 +12,8 @@ config:
     enabled: false
   gitignore:
     - '*.db'
+    - '.ghscanscope.db-shm'
+    - '.ghscanscope.db-wal'
   docs:
     enabled: true
     domain: ghscanscope.unitvectorylabs.com
