@@ -138,3 +138,35 @@ func TestTargetedSyncDoesNotCloseOtherRepositoryAlerts(t *testing.T) {
 		t.Fatal("target sync created an empty repository")
 	}
 }
+
+func TestSyncPreservesReportedSeverityAndUsesCanonicalPriority(t *testing.T) {
+	s, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	repo := repository(1, "one")
+	variants := []struct{ security, rule, reported, want, source string }{
+		{"critical", "", "critical", "Critical", "rule.security_severity_level"},
+		{"", "error", "error", "High", "rule.severity"},
+		{"none", "warning", "warning", "Medium", "rule.severity"},
+		{"", "note", "note", "Low", "rule.severity"},
+		{"informational", "", "informational", "Unknown", "rule.security_severity_level"},
+	}
+	for i, variant := range variants {
+		a := alert(int64(i+1), repo, "r"+string(rune('a'+i)))
+		a.Rule.SecuritySeverity, a.Rule.Severity = variant.security, variant.rule
+		fake := &fakeGitHub{repos: []gh.Repository{repo}, orgAlerts: []gh.Alert{a}}
+		if _, err := (&Syncer{Store: s, GitHub: fake}).Sync(context.Background(), "acme", ""); err != nil {
+			t.Fatal(err)
+		}
+		alerts, err := s.OpenAlerts(context.Background())
+		if err != nil || len(alerts) != 1 {
+			t.Fatalf("variant %d: alerts=%+v err=%v", i, alerts, err)
+		}
+		got := alerts[0]
+		if got.Priority != variant.want || got.ReportedSeverity != variant.reported || got.SeveritySource != variant.source {
+			t.Fatalf("variant %+v persisted %+v", variant, got)
+		}
+	}
+}

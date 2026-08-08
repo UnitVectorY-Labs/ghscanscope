@@ -29,9 +29,9 @@ type Stats struct {
 }
 
 type Group struct {
-	Tool, RuleID, RuleName, Severity string
-	RepositoryCount, AlertCount      int
-	UpdatedAt                        time.Time
+	Tool, RuleID, RuleName, Priority, Severity string
+	RepositoryCount, AlertCount                int
+	UpdatedAt                                  time.Time
 }
 
 type RepoView struct {
@@ -44,27 +44,27 @@ type RepoView struct {
 type severityCounts struct{ Critical, High, Medium, Low, Other int }
 
 type Page struct {
-	View, Title, Eyebrow, Notice  string
-	Organizations                 []store.Organization
-	Repositories                  []RepoView
-	AllRepositories               []RepoView
-	Groups                        []Group
-	Alerts                        []store.Alert
-	Repository                    *RepoView
-	Alert                         *store.Alert
-	Stats                         Stats
-	Filters                       map[string][]string
-	Tools, Rules                  []string
-	Severities, Visibilities      []string
-	Languages                     []string
-	RuleTool, RuleID, RuleName    string
-	RuleSeverity, RuleDescription string
-	RuleRepositoryCount           int
-	FilterOpen                    string
-	SortLinks                     map[string]string
-	RepoSortLinks                 map[string]string
-	AlertSortLinks                map[string]string
-	SortColumn, SortDirection     string
+	View, Title, Eyebrow, Notice                string
+	Organizations                               []store.Organization
+	Repositories                                []RepoView
+	AllRepositories                             []RepoView
+	Groups                                      []Group
+	Alerts                                      []store.Alert
+	Repository                                  *RepoView
+	Alert                                       *store.Alert
+	Stats                                       Stats
+	Filters                                     map[string][]string
+	Tools, Rules                                []string
+	Severities, Visibilities                    []string
+	Languages                                   []string
+	RuleTool, RuleID, RuleName                  string
+	RulePriority, RuleSeverity, RuleDescription string
+	RuleRepositoryCount                         int
+	FilterOpen                                  string
+	SortLinks                                   map[string]string
+	RepoSortLinks                               map[string]string
+	AlertSortLinks                              map[string]string
+	SortColumn, SortDirection                   string
 }
 
 type dataSet struct {
@@ -173,7 +173,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	matchingRepositories := map[int64]bool{}
 	var repositoryViews []RepoView
 	for _, repository := range d.Repositories {
-		if !matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) {
+		if !matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) || !matchesRepositoryPriority(filters, severityCounts[repository.ID]) {
 			continue
 		}
 		matchingRepositories[repository.ID] = true
@@ -183,7 +183,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	}
 	statsAlerts := make([]store.Alert, 0)
 	for _, alert := range d.Alerts {
-		if matchingRepositories[alert.RepositoryID] {
+		if matchingRepositories[alert.RepositoryID] && allows(filters["priority"], alert.Priority) {
 			statsAlerts = append(statsAlerts, alert)
 		}
 	}
@@ -194,7 +194,8 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	sortRepositories(page.Repositories, sortColumn, sortDirection)
 	page.SortColumn, page.SortDirection = sortColumn, sortDirection
 	page.FilterOpen = r.URL.Query().Get("filter_open")
-	page.SortLinks = sortLinks(r, "sort", "dir", []string{"repository", "organization", "visibility", "language", "critical", "high", "medium", "low"})
+	page.Stats.TotalRepositories = len(repositoryViews)
+	page.SortLinks = sortLinks(r, "sort", "dir", []string{"repository", "organization", "visibility", "language", "alerts"})
 	s.render(w, page)
 }
 
@@ -274,7 +275,7 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	representative := allOccurrences[0]
 	page.View, page.Title, page.Eyebrow = "rule", representative.RuleName, "Equivalent finding"
 	page.RuleTool, page.RuleID, page.RuleName = tool, ruleID, representative.RuleName
-	page.RuleSeverity, page.RuleDescription = representative.Severity, representative.RuleDescription
+	page.RulePriority, page.RuleSeverity, page.RuleDescription = representative.Priority, representative.Priority, representative.RuleDescription
 	page.Alerts = alerts
 	page.RuleRepositoryCount = len(repositoryCounts(alerts))
 	page.FilterOpen = r.URL.Query().Get("filter_open")
@@ -304,6 +305,19 @@ func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 	if selectedAlert == nil {
 		http.NotFound(w, r)
 		return
+	}
+	// The primary UI always uses Priority. Keep the scanner's exact value and
+	// the field it came from visible only on this provenance-oriented detail page.
+	if selectedAlert.ReportedSeverity != "" {
+		provenance := "Reported severity: " + selectedAlert.ReportedSeverity
+		if selectedAlert.SeveritySource != "" {
+			provenance += " (from " + selectedAlert.SeveritySource + ")"
+		}
+		if selectedAlert.RuleDescription != "" {
+			selectedAlert.RuleDescription += "\n\n" + provenance
+		} else {
+			selectedAlert.RuleDescription = provenance
+		}
 	}
 	repository := d.RepoByID[selectedAlert.RepositoryID]
 	repoView := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: repositoryCounts(d.Alerts)[repository.ID]}
@@ -376,7 +390,7 @@ func (s *Server) syncRepository(w http.ResponseWriter, r *http.Request) {
 func (s *Server) basePage(d dataSet, filters map[string][]string, scopedAlerts []store.Alert) Page {
 	tools, rules, severities, visibilities, languages := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, alert := range d.Alerts {
-		tools[alert.Tool], rules[alert.RuleID], severities[alert.Severity] = true, true, true
+		tools[alert.Tool], rules[alert.RuleID], severities[alert.Priority] = true, true, true
 	}
 	counts := repositoryCounts(d.Alerts)
 	page := Page{Organizations: d.Organizations, Stats: calculateStats(d, filters, scopedAlerts), Filters: filters}
@@ -396,14 +410,15 @@ func groupAlerts(alerts []store.Alert) []Group {
 		key := alert.Tool + "\x00" + alert.RuleID
 		group := groups[key]
 		if group == nil {
-			group = &Group{Tool: alert.Tool, RuleID: alert.RuleID, RuleName: alert.RuleName, Severity: alert.Severity, UpdatedAt: alert.UpdatedAt}
+			group = &Group{Tool: alert.Tool, RuleID: alert.RuleID, RuleName: alert.RuleName, Priority: alert.Priority, Severity: alert.Priority, UpdatedAt: alert.UpdatedAt}
 			groups[key], repositories[key] = group, map[int64]bool{}
 		}
 		group.AlertCount++
 		repositories[key][alert.RepositoryID] = true
 		group.RepositoryCount = len(repositories[key])
-		if severityRank(alert.Severity) > severityRank(group.Severity) {
-			group.Severity = alert.Severity
+		if severityRank(alert.Priority) > severityRank(group.Priority) {
+			group.Priority = alert.Priority
+			group.Severity = alert.Priority
 		}
 		if alert.UpdatedAt.After(group.UpdatedAt) {
 			group.UpdatedAt = alert.UpdatedAt
@@ -418,7 +433,7 @@ func groupAlerts(alerts []store.Alert) []Group {
 
 func queryFilters(r *http.Request) map[string][]string {
 	filters := map[string][]string{}
-	for _, key := range []string{"org", "repo", "severity", "tool", "rule", "visibility", "language"} {
+	for _, key := range []string{"org", "repo", "priority", "tool", "rule", "visibility", "language"} {
 		for _, value := range r.URL.Query()[key] {
 			if value = strings.TrimSpace(value); value != "" {
 				filters[key] = append(filters[key], value)
@@ -440,7 +455,7 @@ func filterAlerts(d dataSet, filters map[string][]string) []store.Alert {
 
 func matchesAlert(filters map[string][]string, alert store.Alert, repository store.Repository) bool {
 	return allows(filters["org"], alert.Org) && allows(filters["repo"], alert.Repository) &&
-		allows(filters["severity"], alert.Severity) && allows(filters["tool"], alert.Tool) &&
+		allows(filters["priority"], alert.Priority) && allows(filters["tool"], alert.Tool) &&
 		allows(filters["rule"], alert.RuleID) && allows(filters["visibility"], repository.Visibility) &&
 		allows(filters["language"], repository.Language)
 }
@@ -448,6 +463,38 @@ func matchesAlert(filters map[string][]string, alert store.Alert, repository sto
 func matchesRepository(filters map[string][]string, repository store.Repository, org string) bool {
 	return allows(filters["org"], org) && allows(filters["repo"], repository.FullName) &&
 		allows(filters["visibility"], repository.Visibility) && allows(filters["language"], repository.Language)
+}
+
+func matchesRepositoryPriority(filters map[string][]string, counts severityCounts) bool {
+	priorities := filters["priority"]
+	if len(priorities) == 0 {
+		return true
+	}
+	for _, priority := range priorities {
+		switch strings.ToLower(priority) {
+		case "critical":
+			if counts.Critical > 0 {
+				return true
+			}
+		case "high":
+			if counts.High > 0 {
+				return true
+			}
+		case "medium":
+			if counts.Medium > 0 {
+				return true
+			}
+		case "low":
+			if counts.Low > 0 {
+				return true
+			}
+		case "unknown":
+			if counts.Other > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func allows(values []string, candidate string) bool {
@@ -478,7 +525,7 @@ func calculateStats(d dataSet, filters map[string][]string, alerts []store.Alert
 	repositories := map[int64]bool{}
 	for _, alert := range alerts {
 		repositories[alert.RepositoryID] = true
-		switch severityClass(alert.Severity) {
+		switch severityClass(alert.Priority) {
 		case "critical":
 			stats.Critical++
 		case "high":
@@ -521,7 +568,7 @@ func repositorySeverityCounts(alerts []store.Alert) map[int64]severityCounts {
 	counts := map[int64]severityCounts{}
 	for _, alert := range alerts {
 		value := counts[alert.RepositoryID]
-		switch severityClass(alert.Severity) {
+		switch severityClass(alert.Priority) {
 		case "critical":
 			value.Critical++
 		case "high":
@@ -593,7 +640,7 @@ func sortGroups(groups []Group, column, direction string) {
 		case "updated":
 			comparison = left.UpdatedAt.Compare(right.UpdatedAt)
 		default:
-			comparison = severityRank(left.Severity) - severityRank(right.Severity)
+			comparison = severityRank(left.Priority) - severityRank(right.Priority)
 			if comparison == 0 {
 				comparison = left.AlertCount - right.AlertCount
 			}
@@ -648,7 +695,7 @@ func sortAlerts(alerts []store.Alert, column, direction string) {
 		case "updated":
 			comparison = left.UpdatedAt.Compare(right.UpdatedAt)
 		default:
-			comparison = severityRank(left.Severity) - severityRank(right.Severity)
+			comparison = severityRank(left.Priority) - severityRank(right.Priority)
 		}
 		return ordered(comparison, direction)
 	})
@@ -665,11 +712,11 @@ func severityRank(value string) int {
 	switch strings.ToLower(value) {
 	case "critical":
 		return 5
-	case "high", "error":
+	case "high":
 		return 4
-	case "medium", "warning":
+	case "medium":
 		return 3
-	case "low", "note", "recommendation":
+	case "low":
 		return 2
 	default:
 		return 1
@@ -687,7 +734,7 @@ func severityClass(value string) string {
 	case 2:
 		return "low"
 	default:
-		return "other"
+		return "unknown"
 	}
 }
 

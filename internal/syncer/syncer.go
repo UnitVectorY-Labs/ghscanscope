@@ -119,16 +119,14 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 				repoIDs[strings.ToLower(a.Repository.FullName)] = repoID
 			}
 		}
-		severity := a.Rule.SecuritySeverity
-		if severity == "" || severity == "none" {
-			severity = a.Rule.Severity
-		}
+		reportedSeverity, severitySource := scannerSeverity(a)
 		loc := a.MostRecentInstance.Location
 		stored = append(stored, store.Alert{
 			OrgID: orgID, RepositoryID: repoID, GitHubID: a.Number,
 			Tool: a.Tool.Name, ToolVersion: a.Tool.Version, ToolGUID: a.Tool.GUID,
 			RuleID: a.Rule.ID, RuleName: a.Rule.Name, RuleDescription: a.Rule.Description,
-			Tags: a.Rule.Tags, Severity: severity,
+			Tags: a.Rule.Tags, Severity: reportedSeverity, ReportedSeverity: reportedSeverity,
+			Priority: store.CanonicalPriority(reportedSeverity), SeveritySource: severitySource,
 			Message: a.MostRecentInstance.Message.Text, Ref: a.MostRecentInstance.Ref,
 			CommitSHA: a.MostRecentInstance.CommitSHA, AnalysisKey: a.MostRecentInstance.AnalysisKey,
 			Environment: a.MostRecentInstance.Environment, Category: a.MostRecentInstance.Category,
@@ -142,6 +140,18 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 	}
 	result.Alerts = len(stored)
 	return result, nil
+}
+
+// scannerSeverity deliberately retains both the exact source value and the
+// field GitHub supplied it from. The canonical app priority is derived later.
+func scannerSeverity(a gh.Alert) (value, source string) {
+	if strings.TrimSpace(a.Rule.SecuritySeverity) != "" && !strings.EqualFold(strings.TrimSpace(a.Rule.SecuritySeverity), "none") {
+		return a.Rule.SecuritySeverity, "rule.security_severity_level"
+	}
+	if strings.TrimSpace(a.Rule.Severity) != "" {
+		return a.Rule.Severity, "rule.severity"
+	}
+	return "", "no severity field"
 }
 
 func (s *Syncer) upsertRepo(ctx context.Context, orgID int64, r gh.Repository) (int64, error) {
