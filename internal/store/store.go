@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -32,16 +33,19 @@ type Repository struct {
 type Alert struct {
 	ID, OrgID, RepositoryID, GitHubID                 int64
 	Org, Repository, Tool, RuleID, RuleName, Severity string
-	RepositoryURL                                     string
-	RuleDescription, ToolVersion, ToolGUID            string
-	Message, Ref, CommitSHA, AnalysisKey              string
-	Environment, Category                             string
-	Tags                                              []string
-	Path                                              string
-	StartLine, EndLine, StartColumn, EndColumn        int
-	URL                                               string
-	CreatedAt, UpdatedAt                              time.Time
-	Open                                              bool
+	// Priority is the app's canonical priority. Severity is retained for
+	// backwards-compatible callers and contains the scanner-reported value.
+	Priority, ReportedSeverity, SeveritySource string
+	RepositoryURL                              string
+	RuleDescription, ToolVersion, ToolGUID     string
+	Message, Ref, CommitSHA, AnalysisKey       string
+	Environment, Category                      string
+	Tags                                       []string
+	Path                                       string
+	StartLine, EndLine, StartColumn, EndColumn int
+	URL                                        string
+	CreatedAt, UpdatedAt                       time.Time
+	Open                                       bool
 }
 
 func Open(path string) (*Store, error) {
@@ -78,7 +82,7 @@ CREATE TABLE IF NOT EXISTS repositories (
 CREATE TABLE IF NOT EXISTS alerts (
  id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL REFERENCES organizations(id), repository_id INTEGER NOT NULL REFERENCES repositories(id),
  github_id INTEGER NOT NULL, tool TEXT NOT NULL, tool_version TEXT NOT NULL DEFAULT '', tool_guid TEXT NOT NULL DEFAULT '',
- rule_id TEXT NOT NULL, rule_name TEXT NOT NULL DEFAULT '', rule_description TEXT NOT NULL DEFAULT '', rule_tags TEXT NOT NULL DEFAULT '[]', severity TEXT NOT NULL DEFAULT '',
+ rule_id TEXT NOT NULL, rule_name TEXT NOT NULL DEFAULT '', rule_description TEXT NOT NULL DEFAULT '', rule_tags TEXT NOT NULL DEFAULT '[]', severity TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT 'Unknown', reported_severity TEXT NOT NULL DEFAULT '', severity_source TEXT NOT NULL DEFAULT '',
  message TEXT NOT NULL DEFAULT '', ref TEXT NOT NULL DEFAULT '', commit_sha TEXT NOT NULL DEFAULT '', analysis_key TEXT NOT NULL DEFAULT '',
  environment TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
  path TEXT NOT NULL DEFAULT '', start_line INTEGER NOT NULL DEFAULT 0, end_line INTEGER NOT NULL DEFAULT 0,
@@ -99,23 +103,57 @@ CREATE INDEX IF NOT EXISTS idx_repositories_org ON repositories(org_id);
 		return err
 	}
 	columns := map[string]string{
-		"tool_version":     "ALTER TABLE alerts ADD COLUMN tool_version TEXT NOT NULL DEFAULT ''",
-		"tool_guid":        "ALTER TABLE alerts ADD COLUMN tool_guid TEXT NOT NULL DEFAULT ''",
-		"rule_description": "ALTER TABLE alerts ADD COLUMN rule_description TEXT NOT NULL DEFAULT ''",
-		"rule_tags":        "ALTER TABLE alerts ADD COLUMN rule_tags TEXT NOT NULL DEFAULT '[]'",
-		"message":          "ALTER TABLE alerts ADD COLUMN message TEXT NOT NULL DEFAULT ''",
-		"ref":              "ALTER TABLE alerts ADD COLUMN ref TEXT NOT NULL DEFAULT ''",
-		"commit_sha":       "ALTER TABLE alerts ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''",
-		"analysis_key":     "ALTER TABLE alerts ADD COLUMN analysis_key TEXT NOT NULL DEFAULT ''",
-		"environment":      "ALTER TABLE alerts ADD COLUMN environment TEXT NOT NULL DEFAULT ''",
-		"category":         "ALTER TABLE alerts ADD COLUMN category TEXT NOT NULL DEFAULT ''",
+		"tool_version":      "ALTER TABLE alerts ADD COLUMN tool_version TEXT NOT NULL DEFAULT ''",
+		"tool_guid":         "ALTER TABLE alerts ADD COLUMN tool_guid TEXT NOT NULL DEFAULT ''",
+		"rule_description":  "ALTER TABLE alerts ADD COLUMN rule_description TEXT NOT NULL DEFAULT ''",
+		"rule_tags":         "ALTER TABLE alerts ADD COLUMN rule_tags TEXT NOT NULL DEFAULT '[]'",
+		"message":           "ALTER TABLE alerts ADD COLUMN message TEXT NOT NULL DEFAULT ''",
+		"ref":               "ALTER TABLE alerts ADD COLUMN ref TEXT NOT NULL DEFAULT ''",
+		"commit_sha":        "ALTER TABLE alerts ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''",
+		"analysis_key":      "ALTER TABLE alerts ADD COLUMN analysis_key TEXT NOT NULL DEFAULT ''",
+		"environment":       "ALTER TABLE alerts ADD COLUMN environment TEXT NOT NULL DEFAULT ''",
+		"category":          "ALTER TABLE alerts ADD COLUMN category TEXT NOT NULL DEFAULT ''",
+		"priority":          "ALTER TABLE alerts ADD COLUMN priority TEXT NOT NULL DEFAULT 'Unknown'",
+		"reported_severity": "ALTER TABLE alerts ADD COLUMN reported_severity TEXT NOT NULL DEFAULT ''",
+		"severity_source":   "ALTER TABLE alerts ADD COLUMN severity_source TEXT NOT NULL DEFAULT ''",
 	}
 	for name, statement := range columns {
 		if err := s.ensureAlertColumn(ctx, name, statement); err != nil {
 			return err
 		}
 	}
+	// Existing databases only had alerts.severity. Preserve that exact value and
+	// label its provenance honestly; it cannot be reconstructed after the fact.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE alerts SET reported_severity=severity WHERE reported_severity=''`); err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE alerts SET severity_source='legacy alerts.severity' WHERE severity_source=''`); err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE alerts SET priority=CASE lower(trim(reported_severity)) WHEN 'critical' THEN 'Critical' WHEN 'high' THEN 'High' WHEN 'error' THEN 'High' WHEN 'medium' THEN 'Medium' WHEN 'warning' THEN 'Medium' WHEN 'low' THEN 'Low' WHEN 'note' THEN 'Low' WHEN 'recommendation' THEN 'Low' ELSE 'Unknown' END`); err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE alerts SET severity=priority`); err != nil {
+		return err
+	}
 	return nil
+}
+
+// CanonicalPriority maps scanner-specific labels to the five labels shown by
+// the application. Values that are not explicitly understood remain Unknown.
+func CanonicalPriority(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return "Critical"
+	case "high", "error":
+		return "High"
+	case "medium", "warning":
+		return "Medium"
+	case "low", "note", "recommendation":
+		return "Low"
+	default:
+		return "Unknown"
+	}
 }
 
 func (s *Store) ensureAlertColumn(ctx context.Context, column, alterStatement string) error {
@@ -203,13 +241,25 @@ func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int6
 		return err
 	}
 	for _, a := range alerts {
+		reported := a.ReportedSeverity
+		if reported == "" {
+			reported = a.Severity
+		}
+		priority := CanonicalPriority(a.Priority)
+		if a.Priority == "" {
+			priority = CanonicalPriority(reported)
+		}
+		source := a.SeveritySource
+		if source == "" {
+			source = "legacy alerts.severity"
+		}
 		tags, marshalErr := json.Marshal(a.Tags)
 		if marshalErr != nil {
 			return fmt.Errorf("store alert %d tags: %w", a.GitHubID, marshalErr)
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO alerts(org_id,repository_id,github_id,tool,tool_version,tool_guid,rule_id,rule_name,rule_description,rule_tags,severity,message,ref,commit_sha,analysis_key,environment,category,path,start_line,end_line,start_column,end_column,url,created_at,updated_at,is_open)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(repository_id,github_id) DO UPDATE SET tool=excluded.tool,tool_version=excluded.tool_version,tool_guid=excluded.tool_guid,rule_id=excluded.rule_id,rule_name=excluded.rule_name,rule_description=excluded.rule_description,rule_tags=excluded.rule_tags,severity=excluded.severity,message=excluded.message,ref=excluded.ref,commit_sha=excluded.commit_sha,analysis_key=excluded.analysis_key,environment=excluded.environment,category=excluded.category,path=excluded.path,start_line=excluded.start_line,end_line=excluded.end_line,start_column=excluded.start_column,end_column=excluded.end_column,url=excluded.url,created_at=excluded.created_at,updated_at=excluded.updated_at,is_open=1`,
-			a.OrgID, a.RepositoryID, a.GitHubID, a.Tool, a.ToolVersion, a.ToolGUID, a.RuleID, a.RuleName, a.RuleDescription, string(tags), a.Severity, a.Message, a.Ref, a.CommitSHA, a.AnalysisKey, a.Environment, a.Category, a.Path, a.StartLine, a.EndLine, a.StartColumn, a.EndColumn, a.URL, a.CreatedAt.UTC().Format(time.RFC3339Nano), a.UpdatedAt.UTC().Format(time.RFC3339Nano))
+		_, err = tx.ExecContext(ctx, `INSERT INTO alerts(org_id,repository_id,github_id,tool,tool_version,tool_guid,rule_id,rule_name,rule_description,rule_tags,severity,priority,reported_severity,severity_source,message,ref,commit_sha,analysis_key,environment,category,path,start_line,end_line,start_column,end_column,url,created_at,updated_at,is_open)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(repository_id,github_id) DO UPDATE SET tool=excluded.tool,tool_version=excluded.tool_version,tool_guid=excluded.tool_guid,rule_id=excluded.rule_id,rule_name=excluded.rule_name,rule_description=excluded.rule_description,rule_tags=excluded.rule_tags,severity=excluded.severity,priority=excluded.priority,reported_severity=excluded.reported_severity,severity_source=excluded.severity_source,message=excluded.message,ref=excluded.ref,commit_sha=excluded.commit_sha,analysis_key=excluded.analysis_key,environment=excluded.environment,category=excluded.category,path=excluded.path,start_line=excluded.start_line,end_line=excluded.end_line,start_column=excluded.start_column,end_column=excluded.end_column,url=excluded.url,created_at=excluded.created_at,updated_at=excluded.updated_at,is_open=1`,
+			a.OrgID, a.RepositoryID, a.GitHubID, a.Tool, a.ToolVersion, a.ToolGUID, a.RuleID, a.RuleName, a.RuleDescription, string(tags), priority, priority, reported, source, a.Message, a.Ref, a.CommitSHA, a.AnalysisKey, a.Environment, a.Category, a.Path, a.StartLine, a.EndLine, a.StartColumn, a.EndColumn, a.URL, a.CreatedAt.UTC().Format(time.RFC3339Nano), a.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			return fmt.Errorf("store alert %d: %w", a.GitHubID, err)
 		}
@@ -267,7 +317,7 @@ func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 }
 
 func (s *Store) OpenAlerts(ctx context.Context) ([]Alert, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1 ORDER BY a.updated_at DESC,a.github_id DESC`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.priority,a.reported_severity,a.severity_source,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1 ORDER BY a.updated_at DESC,a.github_id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +326,7 @@ func (s *Store) OpenAlerts(ctx context.Context) ([]Alert, error) {
 	for rows.Next() {
 		var a Alert
 		var created, updated, tags string
-		if err := rows.Scan(&a.ID, &a.OrgID, &a.RepositoryID, &a.GitHubID, &a.Org, &a.Repository, &a.RepositoryURL, &a.Tool, &a.ToolVersion, &a.ToolGUID, &a.RuleID, &a.RuleName, &a.RuleDescription, &tags, &a.Severity, &a.Message, &a.Ref, &a.CommitSHA, &a.AnalysisKey, &a.Environment, &a.Category, &a.Path, &a.StartLine, &a.EndLine, &a.StartColumn, &a.EndColumn, &a.URL, &created, &updated, &a.Open); err != nil {
+		if err := rows.Scan(&a.ID, &a.OrgID, &a.RepositoryID, &a.GitHubID, &a.Org, &a.Repository, &a.RepositoryURL, &a.Tool, &a.ToolVersion, &a.ToolGUID, &a.RuleID, &a.RuleName, &a.RuleDescription, &tags, &a.Severity, &a.Priority, &a.ReportedSeverity, &a.SeveritySource, &a.Message, &a.Ref, &a.CommitSHA, &a.AnalysisKey, &a.Environment, &a.Category, &a.Path, &a.StartLine, &a.EndLine, &a.StartColumn, &a.EndColumn, &a.URL, &created, &updated, &a.Open); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tags), &a.Tags)

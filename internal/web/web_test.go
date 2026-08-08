@@ -84,7 +84,7 @@ func get(t *testing.T, handler http.Handler, target string) string {
 func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/alerts")
-	for _, want := range []string{"Alert groups", "Repositories", "Reflected XSS", "2 groups · 4 occurrences", "Repositories", "Occurrences", `aria-label="Filter severities"`, "High / error", "Tabler Icons</a>"} {
+	for _, want := range []string{"Alert groups", "Repositories", "Reflected XSS", "2 groups · 4 occurrences", "Repositories", "Occurrences", `aria-label="Filter priorities"`, ">High<", "Tabler Icons</a>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("alerts page missing %q", want)
 		}
@@ -100,10 +100,37 @@ func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *te
 	}
 }
 
+func TestSeverityFilterUsesCanonicalPrioritiesAndDetailsShowProvenance(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// Add an unsupported scanner value to the existing organization without
+	// changing the rest of the fixture's alert set.
+	var orgID int64
+	if err := f.store.DB.QueryRow(`SELECT id FROM organizations WHERE login='acme'`).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.ReplaceOpenAlerts(ctx, orgID, &f.repositoryID, []store.Alert{{OrgID: orgID, RepositoryID: f.repositoryID, GitHubID: 99, Tool: "Other", RuleID: "unknown", RuleName: "Unknown scanner value", Severity: "informational", ReportedSeverity: "informational", SeveritySource: "rule.severity", CreatedAt: now, UpdatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, f.handler, "/alerts?priority=Unknown")
+	if !strings.Contains(body, "Unknown scanner value") || !strings.Contains(body, ">Unknown<") || strings.Contains(body, "Reflected XSS") {
+		t.Fatalf("canonical Unknown filter failed: %s", body)
+	}
+	alertID := int64(0)
+	if err := f.store.DB.QueryRow(`SELECT id FROM alerts WHERE github_id=99`).Scan(&alertID); err != nil {
+		t.Fatal(err)
+	}
+	detail := get(t, f.handler, "/alerts/"+strconv.FormatInt(alertID, 10))
+	if !strings.Contains(detail, "Reported severity: informational (from rule.severity)") {
+		t.Fatalf("reported severity provenance is missing: %s", detail)
+	}
+}
+
 func TestAlertFiltersAreMultiSelectAndSortingIsShareable(t *testing.T) {
 	f := newFixture(t)
-	body := get(t, f.handler, "/alerts?severity=high&severity=low&sort=rule&dir=asc")
-	for _, want := range []string{`value="high" checked`, `value="low" checked`, `sort=severity`, "Reflected XSS", "Style issue"} {
+	body := get(t, f.handler, "/alerts?priority=High&priority=Low&sort=rule&dir=asc")
+	for _, want := range []string{`value="High" checked`, `value="Low" checked`, `sort=severity`, "Reflected XSS", "Style issue"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("multi-filtered page missing %q", want)
 		}
@@ -113,10 +140,18 @@ func TestAlertFiltersAreMultiSelectAndSortingIsShareable(t *testing.T) {
 func TestRepositoriesPageIncludesZeroAlertRepository(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/repositories")
-	for _, want := range []string{"acme/zero", "Primary service", ">Critical ", ">High ", `aria-label="View repository alerts"`} {
+	for _, want := range []string{"acme/zero", "Primary service", ">Total ", "High 2", "Low 1", `aria-label="Filter repository priorities"`, `aria-label="View repository alerts"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("repositories page missing %q", want)
 		}
+	}
+}
+
+func TestRepositoriesFilterByPriority(t *testing.T) {
+	f := newFixture(t)
+	body := get(t, f.handler, "/repositories?priority=High&sort=alerts&dir=desc")
+	if !strings.Contains(body, `value="High" checked`) || !strings.Contains(body, "acme/one") || !strings.Contains(body, "acme/two") || strings.Contains(body, `href="/repositories/`+strconv.FormatInt(f.zeroRepositoryID, 10)+`">acme/zero`) || strings.Index(body, "acme/one") > strings.Index(body, "acme/two") {
+		t.Fatalf("priority repository filter did not keep only matching repositories: %s", body)
 	}
 }
 
@@ -151,8 +186,8 @@ func TestRepositoryRuleAndAlertDrillDowns(t *testing.T) {
 
 func TestFiltersSubmitImmediatelyThroughHTMX(t *testing.T) {
 	f := newFixture(t)
-	body := get(t, f.handler, "/alerts?severity=high&filter_open=severity")
-	for _, want := range []string{`hx-get="/alerts"`, `hx-target="#main-content"`, `onchange="this.form.elements.filter_open.value='severity';this.form.requestSubmit()"`, `name="filter_open" value="severity"`} {
+	body := get(t, f.handler, "/alerts?priority=High&filter_open=priority")
+	for _, want := range []string{`hx-get="/alerts"`, `hx-target="#main-content"`, `onchange="this.form.elements.filter_open.value='priority';this.form.requestSubmit()"`, `name="filter_open" value="priority"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("immediate filter markup missing %q", want)
 		}
