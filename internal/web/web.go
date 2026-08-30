@@ -44,7 +44,7 @@ type RepoView struct {
 type severityCounts struct{ Critical, High, Medium, Low, Other int }
 
 type Page struct {
-	View, Title, Eyebrow, Notice                string
+	View, Title, Eyebrow, Notice, ErrorMessage  string
 	Organizations                               []store.Organization
 	Repositories                                []RepoView
 	AllRepositories                             []RepoView
@@ -206,7 +206,7 @@ func (s *Server) repositoryDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	d, err := s.load(r)
@@ -216,7 +216,7 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice s
 	}
 	repository, ok := d.RepoByID[id]
 	if !ok {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	filters := queryFilters(r)
@@ -242,7 +242,7 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice s
 func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	tool, ruleID := strings.TrimSpace(r.URL.Query().Get("tool")), strings.TrimSpace(r.URL.Query().Get("rule"))
 	if tool == "" || ruleID == "" {
-		http.Error(w, "tool and rule are required", http.StatusBadRequest)
+		s.errorPage(w, http.StatusBadRequest, "Invalid request", "tool and rule are required")
 		return
 	}
 	d, err := s.load(r)
@@ -260,7 +260,7 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(allOccurrences) == 0 {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "No open alerts match this rule.")
 		return
 	}
 	alerts := make([]store.Alert, 0, len(allOccurrences))
@@ -287,7 +287,7 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
 		return
 	}
 	d, err := s.load(r)
@@ -303,7 +303,7 @@ func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if selectedAlert == nil {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
 		return
 	}
 	// The primary UI always uses Priority. Keep the scanner's exact value and
@@ -330,7 +330,7 @@ func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.errorPage(w, http.StatusBadRequest, "Invalid request", err.Error())
 		return
 	}
 	org := strings.TrimSpace(r.FormValue("org"))
@@ -348,14 +348,14 @@ func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !known {
-		http.Error(w, "choose a stored organization", http.StatusBadRequest)
+		s.errorPage(w, http.StatusBadRequest, "Invalid request", "choose a stored organization")
 		return
 	}
 	s.mu.Lock()
 	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), org, "")
 	s.mu.Unlock()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		s.errorPage(w, http.StatusBadGateway, "Sync failed", err.Error())
 		return
 	}
 	http.Redirect(w, r, "/alerts?sync=success", http.StatusSeeOther)
@@ -364,7 +364,7 @@ func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 func (s *Server) syncRepository(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	d, err := s.load(r)
@@ -374,14 +374,14 @@ func (s *Server) syncRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	repository, ok := d.RepoByID[id]
 	if !ok {
-		http.NotFound(w, r)
+		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	s.mu.Lock()
 	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), d.OrgNames[repository.OrgID], repository.FullName)
 	s.mu.Unlock()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		s.errorPage(w, http.StatusBadGateway, "Sync failed", err.Error())
 		return
 	}
 	s.repositoryPage(w, r, "Repository data refreshed successfully.")
@@ -788,5 +788,15 @@ func (s *Server) render(w http.ResponseWriter, page Page) {
 }
 
 func (s *Server) serverError(w http.ResponseWriter, err error) {
-	http.Error(w, fmt.Sprintf("ghscanscope: %v", err), http.StatusInternalServerError)
+	s.errorPage(w, http.StatusInternalServerError, "Something went wrong", fmt.Sprintf("ghscanscope: %v", err))
+}
+
+// errorPage renders a full HTML document so htmx 4, which swaps 4xx and 5xx
+// responses by default, can select #main-content or body and swap in a
+// styled error instead of wiping the target with a text/plain body.
+func (s *Server) errorPage(w http.ResponseWriter, status int, title, message string) {
+	page := Page{View: "error", Title: title, Eyebrow: "Error", ErrorMessage: message}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = s.template.Execute(w, page)
 }
