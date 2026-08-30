@@ -100,6 +100,15 @@ func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *te
 	}
 }
 
+func TestPageLoadsPinnedHTMX4FromUnpkgWithIntegrity(t *testing.T) {
+	f := newFixture(t)
+	body := get(t, f.handler, "/alerts")
+	want := `<script src="https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous"></script>`
+	if !strings.Contains(body, want) {
+		t.Fatalf("page does not load the pinned HTMX 4 unpkg asset with SRI: %s", body)
+	}
+}
+
 func TestSeverityFilterUsesCanonicalPrioritiesAndDetailsShowProvenance(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -202,6 +211,36 @@ func TestSingleOrganizationIsPreselectedForSync(t *testing.T) {
 	body := get(t, f.handler, "/alerts")
 	if !strings.Contains(body, `<option value="acme" selected>acme</option>`) || strings.Contains(body, "Sync organization…") {
 		t.Fatal("the only stored organization was not preselected")
+	}
+}
+
+func TestErrorResponsesRenderHTMXSwappableHTMLPages(t *testing.T) {
+	f := newFixture(t)
+	cases := []struct {
+		target  string
+		status  int
+		message string
+	}{
+		{"/repositories/999999", http.StatusNotFound, "The requested repository does not exist."},
+		{"/alerts/999999", http.StatusNotFound, "The requested alert does not exist."},
+		{"/rules", http.StatusBadRequest, "tool and rule are required"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		f.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.target, nil))
+		response := recorder.Result()
+		body, _ := io.ReadAll(response.Body)
+		if response.StatusCode != tc.status {
+			t.Fatalf("GET %s returned %d, want %d: %s", tc.target, response.StatusCode, tc.status, body)
+		}
+		if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+			t.Fatalf("GET %s content type = %q, want text/html so htmx 4 can swap the error", tc.target, contentType)
+		}
+		for _, want := range []string{`<main id="main-content"`, tc.message, `https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js`} {
+			if !strings.Contains(string(body), want) {
+				t.Errorf("GET %s error page missing %q", tc.target, want)
+			}
+		}
 	}
 }
 
