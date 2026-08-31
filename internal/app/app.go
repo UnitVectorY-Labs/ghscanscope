@@ -28,13 +28,13 @@ func RunSync(ctx context.Context, dbPath, org, repo string, out io.Writer) error
 	return nil
 }
 
-func RunWeb(ctx context.Context, dbPath, addr string) error {
+func RunWeb(ctx context.Context, dbPath, addr, version string) error {
 	s, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer s.Close()
-	h := webui.New(s, github.New())
+	h := webui.New(s, github.New(), version)
 	server := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { log.Printf("ghscanscope web listening on http://%s", addr); errCh <- server.ListenAndServe() }()
