@@ -66,7 +66,7 @@ func newFixture(t *testing.T) fixture {
 			detailAlertID = alert.ID
 		}
 	}
-	return fixture{store: s, handler: New(s, unusedGitHub{}), repositoryID: one, zeroRepositoryID: zero, alertID: detailAlertID}
+	return fixture{store: s, handler: New(s, unusedGitHub{}, "v1.2.3"), repositoryID: one, zeroRepositoryID: zero, alertID: detailAlertID}
 }
 
 func get(t *testing.T, handler http.Handler, target string) string {
@@ -84,7 +84,7 @@ func get(t *testing.T, handler http.Handler, target string) string {
 func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/alerts")
-	for _, want := range []string{"Alert groups", "Repositories", "Reflected XSS", "2 groups · 4 occurrences", "Repositories", "Occurrences", `aria-label="Filter priorities"`, ">High<", "Tabler Icons</a>"} {
+	for _, want := range []string{"Alert groups", "Repositories", "Reflected XSS", "2 groups · 4 occurrences", "Repositories", "Occurrences", `aria-label="Filter priorities"`, ">High<", "UnitVectorY Labs</a>", "MIT License</a>", "<strong>ghscanscope</strong> on GitHub", "Version: v1.2.3"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("alerts page missing %q", want)
 		}

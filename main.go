@@ -81,7 +81,7 @@ func main() {
 		db := fs.String("db", env("GHSCAN_SCOPE_DB", ".ghscanscope.db"), "SQLite database path (or GHSCAN_SCOPE_DB)")
 		addr := fs.String("addr", env("GHSCAN_SCOPE_ADDR", "127.0.0.1:8080"), "listen address (or GHSCAN_SCOPE_ADDR)")
 		if err = fs.Parse(os.Args[2:]); err == nil {
-			err = app.RunWeb(ctx, *db, *addr)
+			err = app.RunWeb(ctx, *db, *addr, Version)
 		}
 	default:
 		usage()

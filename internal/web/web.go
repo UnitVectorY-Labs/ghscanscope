@@ -19,6 +19,7 @@ type Server struct {
 	store    *store.Store
 	github   syncer.GitHub
 	template *template.Template
+	version  string
 	mu       sync.Mutex
 }
 
@@ -44,7 +45,7 @@ type RepoView struct {
 type severityCounts struct{ Critical, High, Medium, Low, Other int }
 
 type Page struct {
-	View, Title, Eyebrow, Notice                string
+	View, Title, Eyebrow, Notice, Version       string
 	Organizations                               []store.Organization
 	Repositories                                []RepoView
 	AllRepositories                             []RepoView
@@ -75,8 +76,8 @@ type dataSet struct {
 	RepoByID      map[int64]store.Repository
 }
 
-func New(s *store.Store, g syncer.GitHub) http.Handler {
-	srv := &Server{store: s, github: g, template: template.Must(template.New("page").Funcs(template.FuncMap{
+func New(s *store.Store, g syncer.GitHub, version string) http.Handler {
+	srv := &Server{store: s, github: g, version: version, template: template.Must(template.New("page").Funcs(template.FuncMap{
 		"shortsha": func(value string) string {
 			if len(value) > 10 {
 				return value[:10]
@@ -393,7 +394,7 @@ func (s *Server) basePage(d dataSet, filters map[string][]string, scopedAlerts [
 		tools[alert.Tool], rules[alert.RuleID], severities[alert.Priority] = true, true, true
 	}
 	counts := repositoryCounts(d.Alerts)
-	page := Page{Organizations: d.Organizations, Stats: calculateStats(d, filters, scopedAlerts), Filters: filters}
+	page := Page{Organizations: d.Organizations, Stats: calculateStats(d, filters, scopedAlerts), Filters: filters, Version: s.version}
 	for _, repository := range d.Repositories {
 		visibilities[repository.Visibility], languages[repository.Language] = true, true
 		page.AllRepositories = append(page.AllRepositories, RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: counts[repository.ID]})
