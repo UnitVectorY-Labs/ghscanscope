@@ -1,6 +1,6 @@
 module github.com/UnitVectorY-Labs/ghscanscope
 
-go 1.26.0 // GOVERSION
+go 1.27.0 // GOVERSION
 
 require modernc.org/sqlite v1.57.0
 
