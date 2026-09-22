@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -97,6 +98,15 @@ func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *te
 	}
 	if !strings.Contains(body, `<td class="alert-count">2</td><td class="alert-count has-alerts mobile-hide">3</td>`) {
 		t.Fatal("equivalent finding counts are incorrect")
+	}
+}
+
+func TestPageLoadsPinnedHTMX4FromUnpkgWithIntegrity(t *testing.T) {
+	f := newFixture(t)
+	body := get(t, f.handler, "/alerts")
+	want := `<script src="https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous"></script>`
+	if !strings.Contains(body, want) {
+		t.Fatalf("page does not load the pinned HTMX 4 unpkg asset with SRI: %s", body)
 	}
 }
 
@@ -205,10 +215,79 @@ func TestSingleOrganizationIsPreselectedForSync(t *testing.T) {
 	}
 }
 
+func TestErrorResponsesRenderHTMXSwappableHTMLPages(t *testing.T) {
+	f := newFixture(t)
+	cases := []struct {
+		target  string
+		status  int
+		message string
+	}{
+		{"/repositories/999999", http.StatusNotFound, "The requested repository does not exist."},
+		{"/alerts/999999", http.StatusNotFound, "The requested alert does not exist."},
+		{"/rules", http.StatusBadRequest, "tool and rule are required"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		f.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.target, nil))
+		response := recorder.Result()
+		body, _ := io.ReadAll(response.Body)
+		if response.StatusCode != tc.status {
+			t.Fatalf("GET %s returned %d, want %d: %s", tc.target, response.StatusCode, tc.status, body)
+		}
+		if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+			t.Fatalf("GET %s content type = %q, want text/html so htmx 4 can swap the error", tc.target, contentType)
+		}
+		for _, want := range []string{`<main id="main-content"`, tc.message, "Version: v1.2.3", `https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js`} {
+			if !strings.Contains(string(body), want) {
+				t.Errorf("GET %s error page missing %q", tc.target, want)
+			}
+		}
+	}
+}
+
 func TestRuleFilterCanReturnNoOccurrences(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/rules?tool=CodeQL&rule=go%2Fxss&repo=acme%2Fzero&filter_open=repo")
 	if !strings.Contains(body, "No occurrences match these filters.") || !strings.Contains(body, "Individual occurrences") {
 		t.Fatal("empty rule filtering did not retain the occurrence table")
+	}
+}
+
+type failingGitHub struct{ unusedGitHub }
+
+func (failingGitHub) Repository(context.Context, string, string) (gh.Repository, error) {
+	return gh.Repository{}, errors.New("upstream <unavailable>")
+}
+
+func TestHTMXServerFailuresPreservePageAndEscapeErrors(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			f := newFixture(t)
+			handler := New(f.store, failingGitHub{}, "v1.2.3")
+			method, target := http.MethodPost, "/repositories/"+strconv.FormatInt(f.repositoryID, 10)+"/sync"
+			if status == http.StatusInternalServerError {
+				f.store.Close()
+				method, target = http.MethodGet, "/alerts"
+			}
+			request := httptest.NewRequest(method, target, nil)
+			request.Header.Set("HX-Request", "true")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != status {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, status, recorder.Body.String())
+			}
+			if !strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/html") {
+				t.Fatal("error response is not HTML")
+			}
+			body := recorder.Body.String()
+			for _, want := range []string{`<main id="main-content"`, "Version: v1.2.3", "</body>"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("error page missing %q", want)
+				}
+			}
+			if status == http.StatusBadGateway && (!strings.Contains(body, "&lt;unavailable&gt;") || strings.Contains(body, "<unavailable>")) {
+				t.Fatal("upstream error is not safely escaped")
+			}
+		})
 	}
 }
