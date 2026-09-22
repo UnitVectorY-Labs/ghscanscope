@@ -796,7 +796,7 @@ func (s *Server) serverError(w http.ResponseWriter, err error) {
 // responses by default, can select #main-content or body and swap in a
 // styled error instead of wiping the target with a text/plain body.
 func (s *Server) errorPage(w http.ResponseWriter, status int, title, message string) {
-	page := Page{View: "error", Title: title, Eyebrow: "Error", ErrorMessage: message}
+	page := Page{View: "error", Title: title, Eyebrow: "Error", ErrorMessage: message, Version: s.version}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = s.template.Execute(w, page)

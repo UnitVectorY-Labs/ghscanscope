@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -236,7 +237,7 @@ func TestErrorResponsesRenderHTMXSwappableHTMLPages(t *testing.T) {
 		if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 			t.Fatalf("GET %s content type = %q, want text/html so htmx 4 can swap the error", tc.target, contentType)
 		}
-		for _, want := range []string{`<main id="main-content"`, tc.message, `https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js`} {
+		for _, want := range []string{`<main id="main-content"`, tc.message, "Version: v1.2.3", `https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js`} {
 			if !strings.Contains(string(body), want) {
 				t.Errorf("GET %s error page missing %q", tc.target, want)
 			}
@@ -249,5 +250,44 @@ func TestRuleFilterCanReturnNoOccurrences(t *testing.T) {
 	body := get(t, f.handler, "/rules?tool=CodeQL&rule=go%2Fxss&repo=acme%2Fzero&filter_open=repo")
 	if !strings.Contains(body, "No occurrences match these filters.") || !strings.Contains(body, "Individual occurrences") {
 		t.Fatal("empty rule filtering did not retain the occurrence table")
+	}
+}
+
+type failingGitHub struct{ unusedGitHub }
+
+func (failingGitHub) Repository(context.Context, string, string) (gh.Repository, error) {
+	return gh.Repository{}, errors.New("upstream <unavailable>")
+}
+
+func TestHTMXServerFailuresPreservePageAndEscapeErrors(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			f := newFixture(t)
+			handler := New(f.store, failingGitHub{}, "v1.2.3")
+			method, target := http.MethodPost, "/repositories/"+strconv.FormatInt(f.repositoryID, 10)+"/sync"
+			if status == http.StatusInternalServerError {
+				f.store.Close()
+				method, target = http.MethodGet, "/alerts"
+			}
+			request := httptest.NewRequest(method, target, nil)
+			request.Header.Set("HX-Request", "true")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != status {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, status, recorder.Body.String())
+			}
+			if !strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/html") {
+				t.Fatal("error response is not HTML")
+			}
+			body := recorder.Body.String()
+			for _, want := range []string{`<main id="main-content"`, "Version: v1.2.3", "</body>"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("error page missing %q", want)
+				}
+			}
+			if status == http.StatusBadGateway && (!strings.Contains(body, "&lt;unavailable&gt;") || strings.Contains(body, "<unavailable>")) {
+				t.Fatal("upstream error is not safely escaped")
+			}
+		})
 	}
 }
