@@ -35,9 +35,20 @@ func TestOrganizationRepositoriesPaginationAndHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 	c := &Client{HTTP: server.Client(), BaseURL: server.URL, Token: "test-token"}
+	var pages, counts []int
+	c.OnPage = func(path string, page, items int) {
+		if !strings.HasPrefix(path, "/orgs/acme/repos") {
+			t.Fatalf("wrong progress path: %s", path)
+		}
+		pages = append(pages, page)
+		counts = append(counts, items)
+	}
 	repos, err := c.OrganizationRepositories(context.Background(), "acme")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(pages) != 2 || pages[0] != 1 || pages[1] != 2 || counts[0] != 100 || counts[1] != 101 {
+		t.Fatalf("page progress: %v %v", pages, counts)
 	}
 	if len(repos) != 101 || requests != 2 {
 		t.Fatalf("got %d repositories in %d requests", len(repos), requests)
@@ -69,5 +80,37 @@ func TestAPIErrorIncludesGitHubMessage(t *testing.T) {
 	_, err := c.OrganizationAlerts(context.Background(), "acme")
 	if err == nil || !strings.Contains(err.Error(), "Resource not accessible") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFailedPageDoesNotAdvanceProgress(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"denied"}`)
+			return
+		}
+		fmt.Fprint(w, "[")
+		for i := 0; i < 100; i++ {
+			if i > 0 {
+				fmt.Fprint(w, ",")
+			}
+			fmt.Fprint(w, `{"number":1}`)
+		}
+		fmt.Fprint(w, "]")
+	}))
+	defer server.Close()
+	c := &Client{HTTP: server.Client(), BaseURL: server.URL, OnPage: func(path string, pages, items int) {
+		calls++
+		if pages != 1 || items != 100 {
+			t.Fatalf("incorrect successful progress: %d %d", pages, items)
+		}
+	}}
+	if _, err := c.OrganizationAlerts(context.Background(), "acme"); err == nil {
+		t.Fatal("expected page error")
+	}
+	if calls != 1 {
+		t.Fatalf("failed page emitted progress: %d", calls)
 	}
 }

@@ -17,6 +17,8 @@ import (
 type Client struct {
 	HTTP           *http.Client
 	BaseURL, Token string
+	// OnPage reports only successfully decoded pages, with cumulative item counts.
+	OnPage func(path string, pages, items int)
 }
 
 type Repository struct {
@@ -121,6 +123,7 @@ func (c *Client) get(ctx context.Context, path string, out any) (http.Header, er
 }
 
 func (c *Client) paginate(ctx context.Context, path string, newPage func() any, appendPage func(any)) error {
+	items := 0
 	for page := 1; ; page++ {
 		separator := "?"
 		if strings.Contains(path, "?") {
@@ -141,6 +144,10 @@ func (c *Client) paginate(ctx context.Context, path string, newPage func() any, 
 			length = len(*v)
 		default:
 			return errors.New("unsupported pagination type")
+		}
+		items += length
+		if c.OnPage != nil {
+			c.OnPage(path, page, items)
 		}
 		if length < 100 {
 			return nil

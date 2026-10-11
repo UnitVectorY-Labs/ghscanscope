@@ -10,6 +10,8 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - Detect GitHub repositories from local checkouts, including subdirectories and worktrees.
 - Configure organization folders with a `.ghscanscope` property file.
 - Share findings across working directories in a local SQLite database.
+- Read color-coded CLI output and follow sync progress; set `NO_COLOR` for plain text.
+- Export cached repository findings as plain text or JSON, filtered by priority and scanner.
 - Compare findings by scanner and rule with search, filters, and GitHub links.
 
 ## Quick Start
@@ -36,6 +38,23 @@ From a GitHub checkout, `ghscanscope sync` refreshes just that repository using
 its `origin` remote. From an organization folder such as `~/github`, set
 `org=UnitVectorY-Labs` in `.ghscanscope` and run `ghscanscope sync` there.
 Command-line flags and environment variables override these defaults.
+
+Inspect cached findings from a checkout, or select a repository explicitly:
+
+```sh
+ghscanscope findings
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --level critical,high --json
+```
+
+The default text output is a short summary. Filters or `--verbose` (also `--details`) show finding
+messages, file and line locations, rules, revisions, and scanner metadata.
+`--ref refs/heads/main` selects a cached Git ref.
+`--json` always includes full finding records. Reading the cache needs no GitHub
+credentials; run `sync` to refresh it.
+
+Human-readable output uses color by default. Define `NO_COLOR` (even with an
+empty value) to disable it. JSON is always uncolored. Sync shows live progress
+on stderr, with counted bars for caching and activity while downloading.
 
 See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), and
 [Examples](docs/EXAMPLES.md) for the full reference. The

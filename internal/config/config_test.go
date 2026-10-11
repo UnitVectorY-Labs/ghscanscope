@@ -107,6 +107,10 @@ func TestSubdirectoryAndWorktree(t *testing.T) {
 		if err != nil || org != "Owner" || repo != "Owner/project" {
 			t.Fatalf("%s: %q %q %v", cwd, org, repo, err)
 		}
+		org, repo, err = ResolveFindings(context.Background(), cwd, SyncOptions{})
+		if err != nil || org != "Owner" || repo != "Owner/project" {
+			t.Fatalf("findings %s: %q %q %v", cwd, org, repo, err)
+		}
 	}
 }
 
@@ -152,5 +156,31 @@ func TestDatabasePath(t *testing.T) {
 	t.Setenv(homeEnv, "")
 	if _, err := DatabasePath(explicit); err != nil {
 		t.Fatalf("override should not require home: %v", err)
+	}
+}
+
+func TestResolveFindings(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init")
+	git(t, dir, "remote", "add", "origin", "https://github.com/Owner/project.git")
+	for _, tt := range []struct {
+		opts SyncOptions
+		want string
+		fail bool
+	}{
+		{SyncOptions{}, "Owner/project", false},
+		{SyncOptions{Repo: "Other/target", RepoSet: true}, "Other/target", false},
+		{SyncOptions{Org: "Other", Repo: "target", OrgSet: true, RepoSet: true}, "Other/target", false},
+		{SyncOptions{Org: "Other", OrgSet: true}, "", true},
+		{SyncOptions{RepoSet: true}, "", true},
+		{SyncOptions{Org: "Other", Repo: "Owner/project", OrgSet: true, RepoSet: true}, "", true},
+	} {
+		_, repo, err := ResolveFindings(context.Background(), dir, tt.opts)
+		if (err != nil) != tt.fail || repo != tt.want {
+			t.Fatalf("%+v: %q %v", tt.opts, repo, err)
+		}
+	}
+	if _, _, err := ResolveFindings(context.Background(), t.TempDir(), SyncOptions{}); err == nil {
+		t.Fatal("repository required outside a checkout")
 	}
 }

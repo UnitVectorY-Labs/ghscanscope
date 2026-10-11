@@ -227,6 +227,12 @@ func (s *Store) UpsertRepository(ctx context.Context, r Repository) (int64, erro
 }
 
 func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int64, alerts []Alert) error {
+	return s.ReplaceOpenAlertsWithProgress(ctx, orgID, repoID, alerts, nil)
+}
+
+// ReplaceOpenAlertsWithProgress reports rows written inside the transaction.
+// Completion of the callback does not imply the transaction has committed.
+func (s *Store) ReplaceOpenAlertsWithProgress(ctx context.Context, orgID int64, repoID *int64, alerts []Alert, progress func(done, total int)) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -240,7 +246,10 @@ func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int6
 	if err != nil {
 		return err
 	}
-	for _, a := range alerts {
+	if progress != nil {
+		progress(0, len(alerts))
+	}
+	for i, a := range alerts {
 		reported := a.ReportedSeverity
 		if reported == "" {
 			reported = a.Severity
@@ -262,6 +271,9 @@ func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int6
 			a.OrgID, a.RepositoryID, a.GitHubID, a.Tool, a.ToolVersion, a.ToolGUID, a.RuleID, a.RuleName, a.RuleDescription, string(tags), priority, priority, reported, source, a.Message, a.Ref, a.CommitSHA, a.AnalysisKey, a.Environment, a.Category, a.Path, a.StartLine, a.EndLine, a.StartColumn, a.EndColumn, a.URL, a.CreatedAt.UTC().Format(time.RFC3339Nano), a.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			return fmt.Errorf("store alert %d: %w", a.GitHubID, err)
+		}
+		if progress != nil {
+			progress(i+1, len(alerts))
 		}
 	}
 	return tx.Commit()
@@ -317,7 +329,16 @@ func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 }
 
 func (s *Store) OpenAlerts(ctx context.Context) ([]Alert, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.priority,a.reported_severity,a.severity_source,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1 ORDER BY a.updated_at DESC,a.github_id DESC`)
+	return s.openAlerts(ctx, "", nil)
+}
+
+// RepositoryAlerts returns only the current cached open alerts for one repository.
+func (s *Store) RepositoryAlerts(ctx context.Context, fullName string) ([]Alert, error) {
+	return s.openAlerts(ctx, " AND r.full_name=? COLLATE NOCASE", []any{fullName})
+}
+
+func (s *Store) openAlerts(ctx context.Context, where string, args []any) ([]Alert, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.priority,a.reported_severity,a.severity_source,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1`+where+` ORDER BY a.updated_at DESC,a.github_id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
