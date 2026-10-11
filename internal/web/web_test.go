@@ -431,6 +431,9 @@ func TestFilteredCountsShowUnfilteredTotals(t *testing.T) {
 		{"/alerts?priority=Low", []string{"<strong>1 <span class=\"count-total\">/ 4</span></strong>", "High 0 <span class=\"count-total\">/ 3</span>", "Low 1 <span class=\"count-total\">/ 1</span>"}},
 		{"/rules?tool=CodeQL&rule=go%2Fxss&repo=acme%2Fone", []string{"<strong>2 <span class=\"count-total\">/ 3</span></strong>", "High 2 <span class=\"count-total\">/ 3</span>", "across <b>1 <span class=\"count-total\">/ 2</span></b>"}},
 		{"/repositories/" + strconv.FormatInt(f.repositoryID, 10) + "?priority=Low", []string{"<strong>0 <span class=\"count-total\">/ 2</span></strong>", "High 0 <span class=\"count-total\">/ 2</span>"}},
+		{"/repositories?priority=High", []string{`<span class="metric ">1 <span class="count-total">/ 2</span></span>`, `High 1 <span class="count-total">/ 1</span>`}},
+		{"/repositories", []string{`<span class="metric zero">0 <span class="count-total">/ 0</span></span>`}},
+		{"/rules?tool=CodeQL&rule=go%2Fxss", []string{`<b>1 <span class="count-total">/ 1</span></b> occurrences`, `High 1 <span class="count-total">/ 1</span>`}},
 		{"/repositories?priority=Low", []string{"<strong>1 <span class=\"count-total\">/ 4</span></strong>", "Low 1 <span class=\"count-total\">/ 1</span>", "High 0 <span class=\"count-total\">/ 3</span>"}},
 	} {
 		body := get(t, f.handler, tc.url)

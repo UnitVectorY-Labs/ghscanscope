@@ -49,6 +49,8 @@ type RepoView struct {
 
 type FilterChip struct{ Label, URL string }
 
+type countComparison struct{ Shown, Total int }
+
 type severityCounts struct{ Critical, High, Medium, Low, Other int }
 
 type Page struct {
@@ -90,9 +92,8 @@ type dataSet struct {
 
 func New(s *store.Store, g syncer.GitHub, version string) http.Handler {
 	srv := &Server{store: s, github: g, version: version, template: template.Must(template.New("page").Funcs(template.FuncMap{
-		"countOf": func(shown, total int) template.HTML {
-			// Both values are integers; the fixed markup contains no external content.
-			return template.HTML(fmt.Sprintf(`%d <span class="count-total">/ %d</span>`, shown, total))
+		"countOf": func(shown, total int) countComparison {
+			return countComparison{Shown: shown, Total: total}
 		},
 		"shortsha": func(value string) string {
 			if len(value) > 10 {
@@ -239,6 +240,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	matchingAlerts := filterAlerts(d, alertFilters)
 	counts := repositoryCounts(matchingAlerts)
 	severityCounts := repositorySeverityCounts(matchingAlerts)
+	totals := repositoryAlertStats(d.Alerts)
 	matchingRepositories := map[int64]bool{}
 	var repositoryViews []RepoView
 	for _, repository := range d.Repositories {
@@ -248,7 +250,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 		matchingRepositories[repository.ID] = true
 		view := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: counts[repository.ID]}
 		applySeverityCounts(&view, severityCounts[repository.ID])
-		view.Totals = statsForRepository(d, repository.ID, d.Alerts)
+		view.Totals = totals[repository.ID]
 		repositoryViews = append(repositoryViews, view)
 	}
 	statsAlerts := make([]store.Alert, 0)
@@ -384,11 +386,12 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	counts := repositoryCounts(alerts)
 	severities := repositorySeverityCounts(alerts)
+	totals := repositoryAlertStats(allOccurrences)
 	for _, repo := range d.Repositories {
 		if counts[repo.ID] > 0 {
 			view := RepoView{Repository: repo, Org: d.OrgNames[repo.OrgID], AlertCount: counts[repo.ID]}
 			applySeverityCounts(&view, severities[repo.ID])
-			view.Totals = statsForRepository(d, repo.ID, allOccurrences)
+			view.Totals = totals[repo.ID]
 			page.RuleRepositories = append(page.RuleRepositories, view)
 		}
 	}
@@ -719,6 +722,18 @@ func repositorySeverityCounts(alerts []store.Alert) map[int64]severityCounts {
 		counts[alert.RepositoryID] = value
 	}
 	return counts
+}
+
+// repositoryAlertStats aggregates only the counts used by repository rows.
+func repositoryAlertStats(alerts []store.Alert) map[int64]Stats {
+	stats := map[int64]Stats{}
+	for id, counts := range repositorySeverityCounts(alerts) {
+		stats[id] = Stats{
+			Open:     counts.Critical + counts.High + counts.Medium + counts.Low + counts.Other,
+			Critical: counts.Critical, High: counts.High, Medium: counts.Medium, Low: counts.Low, Other: counts.Other,
+		}
+	}
+	return stats
 }
 
 func applySeverityCounts(view *RepoView, counts severityCounts) {
