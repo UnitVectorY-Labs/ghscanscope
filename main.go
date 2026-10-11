@@ -42,6 +42,7 @@ func env(key, fallback string) string {
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]")
+	fmt.Fprintln(os.Stderr, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--details] [--json]")
 	fmt.Fprintln(os.Stderr, "  ghscanscope web [--db PATH] [--addr ADDRESS]")
 	fmt.Fprintln(os.Stderr, "  ghscanscope version")
 }
@@ -112,6 +113,8 @@ func main() {
 				err = app.RunWeb(ctx, dbPath, *addr, Version)
 			}
 		}
+	case "findings":
+		err = runFindings(ctx, os.Args[2:], os.Stdout)
 	default:
 		usage()
 		os.Exit(2)

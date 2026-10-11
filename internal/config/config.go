@@ -20,6 +20,22 @@ type SyncOptions struct {
 	OrgSet, RepoSet bool
 }
 
+// ResolveFindings requires a single repository, using the same checkout and
+// explicit selection rules as sync. A short name is accepted with an owner.
+func ResolveFindings(ctx context.Context, dir string, opts SyncOptions) (string, string, error) {
+	if opts.RepoSet && opts.OrgSet && strings.TrimSpace(opts.Repo) != "" && !strings.Contains(opts.Repo, "/") {
+		opts.Repo = strings.TrimSpace(opts.Org) + "/" + strings.TrimSpace(opts.Repo)
+	}
+	org, repo, err := ResolveSync(ctx, dir, opts)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve findings repository (use --repo OWNER/REPO or GHSCAN_SCOPE_REPO): %w", err)
+	}
+	if repo == "" {
+		return "", "", fmt.Errorf("repository is required: use --repo OWNER/REPO, GHSCAN_SCOPE_REPO, or run inside a GitHub checkout")
+	}
+	return org, repo, nil
+}
+
 func ResolveSync(ctx context.Context, dir string, opts SyncOptions) (string, string, error) {
 	org, repo := strings.TrimSpace(opts.Org), strings.TrimSpace(opts.Repo)
 	if !opts.OrgSet && !opts.RepoSet {

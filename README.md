@@ -10,6 +10,7 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - Detect GitHub repositories from local checkouts, including subdirectories and worktrees.
 - Configure organization folders with a `.ghscanscope` property file.
 - Share findings across working directories in a local SQLite database.
+- Export cached repository findings as plain text or JSON, filtered by priority and scanner.
 - Compare findings by scanner and rule with search, filters, and GitHub links.
 
 ## Quick Start
@@ -36,6 +37,18 @@ From a GitHub checkout, `ghscanscope sync` refreshes just that repository using
 its `origin` remote. From an organization folder such as `~/github`, set
 `org=UnitVectorY-Labs` in `.ghscanscope` and run `ghscanscope sync` there.
 Command-line flags and environment variables override these defaults.
+
+Inspect cached findings from a checkout, or select a repository explicitly:
+
+```sh
+ghscanscope findings
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --level critical,high --json
+```
+
+The default text output is a short summary. Filters or `--details` show finding
+messages, file and line locations, rules, revisions, and scanner metadata.
+`--json` always includes full finding records. Reading the cache needs no GitHub
+credentials; run `sync` to refresh it.
 
 See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), and
 [Examples](docs/EXAMPLES.md) for the full reference. The

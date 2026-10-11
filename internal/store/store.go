@@ -317,7 +317,16 @@ func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 }
 
 func (s *Store) OpenAlerts(ctx context.Context) ([]Alert, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.priority,a.reported_severity,a.severity_source,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1 ORDER BY a.updated_at DESC,a.github_id DESC`)
+	return s.openAlerts(ctx, "", nil)
+}
+
+// RepositoryAlerts returns only the current cached open alerts for one repository.
+func (s *Store) RepositoryAlerts(ctx context.Context, fullName string) ([]Alert, error) {
+	return s.openAlerts(ctx, " AND r.full_name=? COLLATE NOCASE", []any{fullName})
+}
+
+func (s *Store) openAlerts(ctx context.Context, where string, args []any) ([]Alert, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.org_id,a.repository_id,a.github_id,o.login,r.full_name,r.url,a.tool,a.tool_version,a.tool_guid,a.rule_id,a.rule_name,a.rule_description,a.rule_tags,a.severity,a.priority,a.reported_severity,a.severity_source,a.message,a.ref,a.commit_sha,a.analysis_key,a.environment,a.category,a.path,a.start_line,a.end_line,a.start_column,a.end_column,a.url,a.created_at,a.updated_at,a.is_open FROM alerts a JOIN organizations o ON o.id=a.org_id JOIN repositories r ON r.id=a.repository_id WHERE a.is_open=1`+where+` ORDER BY a.updated_at DESC,a.github_id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}

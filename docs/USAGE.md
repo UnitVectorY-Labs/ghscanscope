@@ -18,11 +18,12 @@ permalink: /usage
 
 ```text
 ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]
+ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--details] [--json]
 ghscanscope web [--db PATH] [--addr ADDRESS]
 ghscanscope version
 ```
 
-Use `ghscanscope sync --help` or `ghscanscope web --help` for flag descriptions. Place flags after the command.
+Use `ghscanscope sync --help`, `ghscanscope findings --help`, or `ghscanscope web --help` for flag descriptions. Place flags after the command.
 
 ### sync
 
@@ -37,6 +38,41 @@ Download repository metadata and open GitHub code-scanning alerts into SQLite. T
 A full organization sync catalogs every repository, including repositories without alerts, and refreshes open code-scanning alerts for the organization. A single repository sync refreshes only that repository and leaves other repositories' alerts unchanged.
 
 After a successful alert refresh, previously open alerts absent from the response remain in SQLite as non-open history and disappear from the dashboard. A failed alert fetch does not retire previously stored alerts. Sync status and errors are recorded locally.
+
+### findings
+
+Read one repository's cached open code-scanning findings without contacting GitHub or requiring authentication. From a GitHub checkout (including subdirectories and worktrees), run `ghscanscope findings`. From any other directory, select a repository with `--repo OWNER/REPO` or `--org OWNER --repo REPO`.
+
+| Flag | Environment variable | Default |
+| --- | --- | --- |
+| `--org` | `GHSCAN_SCOPE_ORG` | Selected repository's owner |
+| `--repo` | `GHSCAN_SCOPE_REPO` | GitHub `origin` checkout detection |
+| `--db` | `GHSCAN_SCOPE_DB` | `~/.local/share/ghscanscope/ghscanscope.db` |
+| `--level` | — | All priorities, including unknown |
+| `--scanner` | — | All scanners |
+| `--details` | — | Off; filters enable detailed text automatically |
+| `--json` | — | Off; when enabled, always includes full finding records |
+
+With no filters, text output summarizes the repository, metadata cache timestamp, matching and total open counts, priority counts, and scanner counts. Use `--details` to print all finding details. Supplying either filter also prints detailed findings. JSON always contains full records, even without filters; `--details` does not change JSON output.
+
+`--level` accepts `critical`, `high`, `medium`, `low`, and `unknown`. These are the same canonical priorities used by the web view: scanner `error` maps to high, `warning` to medium, and `note`/`recommendation` to low. The original reported severity and its source are retained in each finding. `--scanner` matches the complete cached tool name (for example, `CodeQL` or `Semgrep OSS`). Both filters ignore case, accept repeated flags or comma-separated values, and select any listed value within a filter. Level and scanner filters are combined with AND.
+
+```sh
+ghscanscope findings
+ghscanscope findings --level critical,high
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --scanner CodeQL --details
+ghscanscope findings --org UnitVectorY-Labs --repo ghscanscope --level high --json > findings.json
+```
+
+Detailed text and JSON include the alert number, priority, reported severity and source, scanner name/version/GUID, rule ID/name/description/tags, finding message, file path, start/end lines and columns, ref, commit SHA, analysis key, environment, category, alert URL, and created/updated timestamps. Findings are ordered by priority (critical first, unknown last), then alert number. Source code and additional remediation text are not stored in the cache and are not fetched by this command. Missing locations remain empty paths and zero line/column values in JSON; text explicitly marks unreported locations.
+
+The JSON object has `repository`, `repository_url`, `repository_cached_at`, `total_open`, `matching`, `by_level`, `by_scanner`, and `findings`. Counts by level/scanner describe the matching findings; `total_open` is the repository's count before filters. `findings` is always an array, including `[]` for no matches. Individual records use snake_case keys, such as `rule_description`, `reported_severity`, `path`, `start_line`, and `commit_sha`. JSON contains no text preamble; errors go to standard error.
+
+This exposes the current cached open alerts and each alert's most recent stored instance, just as the web view does. SQLite does not retain separate scan snapshots. `repository_cached_at` is the repository metadata refresh time, not a scanner completion time or a guarantee that the last alert refresh succeeded. A failed alert fetch leaves previously cached findings available. Run `sync` to refresh the cache before exporting when freshness matters. Retired alerts are excluded. Zero matching findings does not establish scan coverage.
+
+A missing database or uncached repository produces an error instructing you to sync first. A cached repository with no open findings, or a filter with no matches, succeeds with zero counts. Exit status does not depend on finding severity.
+
+Flags override environment variables. An explicit repository overrides checkout detection, and an explicit owner must match the repository owner, ignoring case. A short repository name requires an explicit owner. As with `sync`, an explicit owner alone suppresses checkout detection; `findings` then fails because it requires one repository. Organization directory property files do not select a repository for this command.
 
 ### web
 
@@ -55,7 +91,7 @@ Print the application version, Go version, operating system, and architecture.
 
 ## Configuration Precedence
 
-Command-line flags override their corresponding environment variables. Unset or empty environment variables fall back to directory defaults. Organization and repository selection then follow these rules:
+Command-line flags override their corresponding environment variables. Unset or empty environment variables fall back to directory defaults. For `sync`, organization and repository selection then follow these rules:
 
 1. An explicit `--repo` or `GHSCAN_SCOPE_REPO` selects that `OWNER/REPO`. Its owner supplies the organization unless an organization is also explicitly set. An explicit organization must match the repository owner, ignoring case.
 2. An explicit `--org` or `GHSCAN_SCOPE_ORG`, without an explicit repository, selects the entire organization even inside a checkout.
@@ -98,7 +134,7 @@ The default is `~/.local/share/ghscanscope/ghscanscope.db` on all operating syst
 
 Missing parent directories are created automatically. All working directories share the default database, which can hold multiple organizations. Override it with `--db` or `GHSCAN_SCOPE_DB`; relative paths are resolved from the current working directory. Quote or escape custom paths as required by your shell.
 
-Earlier versions defaulted to `.ghscanscope.db` in the working directory. Existing databases are not moved automatically. Continue using one with `--db .ghscanscope.db` on both `sync` and `web`, or move it to the new default location while the application is stopped. SQLite may create adjacent `-wal` and `-shm` files while running.
+Earlier versions defaulted to `.ghscanscope.db` in the working directory. Existing databases are not moved automatically. Continue using one with `--db .ghscanscope.db` on `sync`, `findings`, and `web`, or move it to the new default location while the application is stopped. SQLite may create adjacent `-wal` and `-shm` files while running.
 
 ## Exploring Findings
 

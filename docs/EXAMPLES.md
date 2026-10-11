@@ -72,12 +72,40 @@ If both organization and repository are explicitly set, their owners must agree.
 ghscanscope sync --org UnitVectorY-Labs --repo UnitVectorY-Labs/ghorgsync
 ```
 
+## Export Cached Repository Findings
+
+From the repository checkout, print a short summary or detailed matching findings:
+
+```bash
+ghscanscope findings
+ghscanscope findings --level critical,high
+ghscanscope findings --scanner CodeQL --level high --level medium
+```
+
+Export complete records from any directory:
+
+```bash
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --level critical,high --json > findings.json
+```
+
+Or set the owner and repository independently:
+
+```bash
+export GHSCAN_SCOPE_ORG=UnitVectorY-Labs
+export GHSCAN_SCOPE_REPO=ghscanscope
+ghscanscope findings --details
+unset GHSCAN_SCOPE_ORG GHSCAN_SCOPE_REPO
+```
+
+These commands read only locally cached open findings and do not contact GitHub. Refresh with `sync` first when needed. Full records include scanner messages, rule descriptions, file paths and line/column ranges, and revision metadata. A successful export with no findings does not establish scan coverage.
+
 ## Use a Separate Database
 
-Pass the same database to both commands:
+Pass the same database to each command:
 
 ```bash
 ghscanscope sync --org UnitVectorY-Labs --db ./data/alerts.db
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --db ./data/alerts.db --json
 ghscanscope web --db ./data/alerts.db --addr 127.0.0.1:9090
 ```
 
@@ -89,7 +117,7 @@ ghscanscope sync --org UnitVectorY-Labs
 ghscanscope web
 ```
 
-The parent directory is created automatically. To keep using the previous working-directory database, pass `--db .ghscanscope.db` to both commands.
+The parent directory is created automatically. To keep using the previous working-directory database, pass `--db .ghscanscope.db` to each command.
 
 ## Compare Findings Across Repositories
 
@@ -105,6 +133,8 @@ The parent directory is created automatically. To keep using the previous workin
 | Symptom | What to check |
 | --- | --- |
 | Organization is required | Set `--org`, `GHSCAN_SCOPE_ORG`, or `org` in the current directory's `.ghscanscope`; for checkout detection, check `git remote get-url origin` |
+| Repository is required for findings | Run inside a GitHub checkout or set `--repo OWNER/REPO`; an explicit `--org` also requires a repository |
+| Repository is not cached | Sync the selected repository into the same database first |
 | Wrong sync scope | Check environment variables; an explicit organization selects a full organization sync, while an explicit repository selects one repository |
 | Property file error | Use unquoted `org=NAME`; only `org`, blank lines, and whole-line comments are supported |
 | Repository owner does not match organization | Remove the organization override or set it to the selected repository's owner |
