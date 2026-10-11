@@ -31,10 +31,13 @@ func runFindings(ctx context.Context, args []string, out io.Writer) error {
 	org := fs.String("org", env("GHSCAN_SCOPE_ORG", ""), "repository owner (or GHSCAN_SCOPE_ORG)")
 	repo := fs.String("repo", env("GHSCAN_SCOPE_REPO", ""), "OWNER/REPO, or REPO with --org (or GHSCAN_SCOPE_REPO); defaults to GitHub origin")
 	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
-	var levels, scanners filterValues
+	var levels, scanners, refs filterValues
 	fs.Var(&levels, "level", "priority: critical, high, medium, low, unknown; repeat or comma-separate")
 	fs.Var(&scanners, "scanner", "exact scanner name, ignoring case; repeat or comma-separate")
-	details := fs.Bool("details", false, "print full finding details even without filters")
+	fs.Var(&refs, "ref", "exact Git ref, case-sensitive (for example refs/heads/main); repeat or comma-separate")
+	var details bool
+	fs.BoolVar(&details, "verbose", false, "print full finding details with or without filters")
+	fs.BoolVar(&details, "details", false, "alias for --verbose")
 	asJSON := fs.Bool("json", false, "emit full finding records as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -51,7 +54,7 @@ func runFindings(ctx context.Context, args []string, out io.Writer) error {
 			opts.RepoSet = true
 		}
 	})
-	filters := app.FindingsOptions{Levels: levels, Scanners: scanners, Details: *details, JSON: *asJSON}
+	filters := app.FindingsOptions{Levels: levels, Scanners: scanners, Refs: refs, Details: details, JSON: *asJSON}
 	if err := filters.Validate(); err != nil {
 		return err
 	}

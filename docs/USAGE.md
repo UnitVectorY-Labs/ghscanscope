@@ -18,7 +18,7 @@ permalink: /usage
 
 ```text
 ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]
-ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--details] [--json]
+ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]
 ghscanscope web [--db PATH] [--addr ADDRESS]
 ghscanscope version
 ```
@@ -50,17 +50,20 @@ Read one repository's cached open code-scanning findings without contacting GitH
 | `--db` | `GHSCAN_SCOPE_DB` | `~/.local/share/ghscanscope/ghscanscope.db` |
 | `--level` | — | All priorities, including unknown |
 | `--scanner` | — | All scanners |
-| `--details` | — | Off; filters enable detailed text automatically |
+| `--ref` | — | All cached refs |
+| `--verbose` | — | Off; filters enable detailed text automatically |
+| `--details` | — | Alias for `--verbose` |
 | `--json` | — | Off; when enabled, always includes full finding records |
 
-With no filters, text output summarizes the repository, metadata cache timestamp, matching and total open counts, priority counts, and scanner counts. Use `--details` to print all finding details. Supplying either filter also prints detailed findings. JSON always contains full records, even without filters; `--details` does not change JSON output.
+With no filters, text output summarizes the repository, metadata cache timestamp, matching and total open counts, priority counts, and scanner counts. Use `--verbose` to print all finding details with or without filters (`--details` is also accepted). Supplying any filter also prints detailed findings. JSON always contains full records, even without filters; `--verbose` and `--details` do not change JSON output.
 
-`--level` accepts `critical`, `high`, `medium`, `low`, and `unknown`. These are the same canonical priorities used by the web view: scanner `error` maps to high, `warning` to medium, and `note`/`recommendation` to low. The original reported severity and its source are retained in each finding. `--scanner` matches the complete cached tool name (for example, `CodeQL` or `Semgrep OSS`). Both filters ignore case, accept repeated flags or comma-separated values, and select any listed value within a filter. Level and scanner filters are combined with AND.
+`--level` accepts `critical`, `high`, `medium`, `low`, and `unknown`. These are the same canonical priorities used by the web view: scanner `error` maps to high, `warning` to medium, and `note`/`recommendation` to low. The original reported severity and its source are retained in each finding. `--scanner` matches the complete cached tool name (for example, `CodeQL` or `Semgrep OSS`). Both filters ignore case, accept repeated flags or comma-separated values, and select any listed value within a filter. `--ref` matches the exact full cached Git ref, such as `refs/heads/main`, and is case-sensitive because Git refs can differ by case. It also accepts repeated flags or comma-separated values; any listed ref may match. Level, scanner, and ref filters are combined with AND. This filters each alert's most recent cached instance; other ref instances are not stored separately.
 
 ```sh
 ghscanscope findings
-ghscanscope findings --level critical,high
-ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --scanner CodeQL --details
+ghscanscope findings --level critical,high --verbose
+ghscanscope findings --ref refs/heads/main --level critical,high --json
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --scanner CodeQL --verbose
 ghscanscope findings --org UnitVectorY-Labs --repo ghscanscope --level high --json > findings.json
 ```
 

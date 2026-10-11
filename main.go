@@ -42,7 +42,7 @@ func env(key, fallback string) string {
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]")
-	fmt.Fprintln(os.Stderr, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--details] [--json]")
+	fmt.Fprintln(os.Stderr, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
 	fmt.Fprintln(os.Stderr, "  ghscanscope web [--db PATH] [--addr ADDRESS]")
 	fmt.Fprintln(os.Stderr, "  ghscanscope version")
 }

@@ -45,8 +45,9 @@ ghscanscope findings
 ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --level critical,high --json
 ```
 
-The default text output is a short summary. Filters or `--details` show finding
+The default text output is a short summary. Filters or `--verbose` (also `--details`) show finding
 messages, file and line locations, rules, revisions, and scanner metadata.
+`--ref refs/heads/main` selects a cached Git ref.
 `--json` always includes full finding records. Reading the cache needs no GitHub
 credentials; run `sync` to refresh it.
 

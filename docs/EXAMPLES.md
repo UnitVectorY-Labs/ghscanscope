@@ -78,7 +78,9 @@ From the repository checkout, print a short summary or detailed matching finding
 
 ```bash
 ghscanscope findings
-ghscanscope findings --level critical,high
+ghscanscope findings --verbose
+ghscanscope findings --level critical,high --verbose
+ghscanscope findings --ref refs/heads/main --level critical,high
 ghscanscope findings --scanner CodeQL --level high --level medium
 ```
 
@@ -93,9 +95,11 @@ Or set the owner and repository independently:
 ```bash
 export GHSCAN_SCOPE_ORG=UnitVectorY-Labs
 export GHSCAN_SCOPE_REPO=ghscanscope
-ghscanscope findings --details
+ghscanscope findings --verbose
 unset GHSCAN_SCOPE_ORG GHSCAN_SCOPE_REPO
 ```
+
+`--verbose` prints full details with or without filters; `--details` is an alias. `--ref` matches the exact full cached ref and is case-sensitive. Repeat `--ref` or comma-separate values to select multiple refs. It combines with level and scanner filters.
 
 These commands read only locally cached open findings and do not contact GitHub. Refresh with `sync` first when needed. Full records include scanner messages, rule descriptions, file paths and line/column ranges, and revision metadata. A successful export with no findings does not establish scan coverage.
 

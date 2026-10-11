@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ import (
 )
 
 type FindingsOptions struct {
-	Levels, Scanners []string
-	Details, JSON    bool
+	Levels, Scanners, Refs []string
+	Details, JSON          bool
 }
 
 func (o FindingsOptions) Validate() error {
@@ -109,7 +110,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		return alerts[i].GitHubID < alerts[j].GitHubID
 	})
 	for _, a := range alerts {
-		if !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) {
+		if !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) || (len(opts.Refs) > 0 && !slices.Contains(opts.Refs, a.Ref)) {
 			continue
 		}
 		report.ByLevel[a.Priority]++
@@ -132,7 +133,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(report)
 	}
-	return writeFindings(out, report, opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0)
+	return writeFindings(out, report, opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0)
 }
 
 func includes(values []string, value string) bool {
