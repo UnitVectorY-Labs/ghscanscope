@@ -10,6 +10,7 @@ import (
 
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/app"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/config"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/console"
 )
 
 type filterValues []string
@@ -27,7 +28,7 @@ func (v *filterValues) Set(value string) error {
 }
 
 func runFindings(ctx context.Context, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("findings", flag.ContinueOnError)
+	fs := console.FlagSet("findings")
 	org := fs.String("org", env("GHSCAN_SCOPE_ORG", ""), "repository owner (or GHSCAN_SCOPE_ORG)")
 	repo := fs.String("repo", env("GHSCAN_SCOPE_REPO", ""), "OWNER/REPO, or REPO with --org (or GHSCAN_SCOPE_REPO); defaults to GitHub origin")
 	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")

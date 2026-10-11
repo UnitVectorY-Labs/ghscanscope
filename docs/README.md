@@ -19,6 +19,7 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - **Shared local database** — store findings in `~/.local/share/ghscanscope/ghscanscope.db` across working directories
 - **Cross-repository triage** — group findings by scanner and rule, then compare affected repositories
 - **Search and filters** — combine repository, scanner, priority, and other filters with bookmarkable URLs
+- **Readable CLI output** — color-coded output with `NO_COLOR` support and live sync progress
 - **CLI exports** — inspect one repository’s cached findings as text or JSON with priority, scanner, and Git ref filters
 - **Finding details** — inspect messages, locations, scan metadata, and links to GitHub
 - **Local history** — retain alerts that disappear from a successful refresh as non-open history

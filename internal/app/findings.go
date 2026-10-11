@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/console"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
 )
 
@@ -151,22 +152,23 @@ func includes(values []string, value string) bool {
 func writeFindings(out io.Writer, r FindingsReport, details bool) error {
 	// Buffer text so output errors are returned consistently with JSON errors.
 	var b strings.Builder
-	fmt.Fprintf(&b, "Repository: %s\nRepository cached at: %s\nOpen findings: %d matching / %d total\n", r.Repository, r.RepositoryCachedAt.UTC().Format(time.RFC3339Nano), r.Matching, r.TotalOpen)
-	fmt.Fprintf(&b, "Levels: critical=%d high=%d medium=%d low=%d unknown=%d\n", r.ByLevel["Critical"], r.ByLevel["High"], r.ByLevel["Medium"], r.ByLevel["Low"], r.ByLevel["Unknown"])
+	p := console.New()
+	fmt.Fprintf(&b, "%s %s\n%s %s\n%s %d matching / %d total\n", p.Label("Repository:"), r.Repository, p.Label("Repository cached at:"), r.RepositoryCachedAt.UTC().Format(time.RFC3339Nano), p.Label("Open findings:"), r.Matching, r.TotalOpen)
+	fmt.Fprintf(&b, "%s %s=%d %s=%d %s=%d %s=%d %s=%d\n", p.Label("Levels:"), p.Priority("critical"), r.ByLevel["Critical"], p.Priority("high"), r.ByLevel["High"], p.Priority("medium"), r.ByLevel["Medium"], p.Priority("low"), r.ByLevel["Low"], p.Priority("unknown"), r.ByLevel["Unknown"])
 	scanners := make([]string, 0, len(r.ByScanner))
 	for name := range r.ByScanner {
 		scanners = append(scanners, name)
 	}
 	sort.Strings(scanners)
 	for _, name := range scanners {
-		fmt.Fprintf(&b, "Scanner: %s (%d)\n", name, r.ByScanner[name])
+		fmt.Fprintf(&b, "%s %s (%d)\n", p.Label("Scanner:"), name, r.ByScanner[name])
 	}
 	if r.Matching == 0 {
-		fmt.Fprintln(&b, "No matching cached open findings. This does not establish scan coverage.")
+		fmt.Fprintln(&b, p.Color(console.Yellow, "No matching cached open findings. This does not establish scan coverage."))
 	}
 	if details {
 		for _, f := range r.Findings {
-			fmt.Fprintf(&b, "\n[%s] #%d %s: %s\n", f.Priority, f.Number, f.Scanner, f.RuleID)
+			fmt.Fprintf(&b, "\n[%s] #%d %s: %s\n", p.Priority(f.Priority), f.Number, p.Color(console.Cyan, f.Scanner), f.RuleID)
 			fields := []struct{ name, value string }{
 				{"Rule name", f.RuleName}, {"Description", f.RuleDescription}, {"Message", f.Message}, {"Path", f.Path},
 				{"Reported severity", f.ReportedSeverity}, {"Severity source", f.SeveritySource}, {"Tags", strings.Join(f.Tags, ", ")},
@@ -175,13 +177,13 @@ func writeFindings(out io.Writer, r FindingsReport, details bool) error {
 			}
 			for _, field := range fields {
 				if field.value != "" {
-					fmt.Fprintf(&b, "  %s: %s\n", field.name, strings.ReplaceAll(field.value, "\n", "\n    "))
+					fmt.Fprintf(&b, "  %s: %s\n", p.Label(field.name), strings.ReplaceAll(field.value, "\n", "\n    "))
 				}
 			}
 			if f.Path == "" {
-				fmt.Fprintln(&b, "  Location: not reported")
+				fmt.Fprintln(&b, "  "+p.Label("Location:")+" not reported")
 			}
-			fmt.Fprintf(&b, "  Lines: %d-%d; columns: %d-%d\n  Created: %s\n  Updated: %s\n", f.StartLine, f.EndLine, f.StartColumn, f.EndColumn, f.CreatedAt.UTC().Format(time.RFC3339Nano), f.UpdatedAt.UTC().Format(time.RFC3339Nano))
+			fmt.Fprintf(&b, "  %s %d-%d; columns: %d-%d\n  %s %s\n  %s %s\n", p.Label("Lines:"), f.StartLine, f.EndLine, f.StartColumn, f.EndColumn, p.Label("Created:"), f.CreatedAt.UTC().Format(time.RFC3339Nano), p.Label("Updated:"), f.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		}
 	}
 	_, err := io.WriteString(out, b.String())

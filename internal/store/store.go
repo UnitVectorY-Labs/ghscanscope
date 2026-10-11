@@ -227,6 +227,12 @@ func (s *Store) UpsertRepository(ctx context.Context, r Repository) (int64, erro
 }
 
 func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int64, alerts []Alert) error {
+	return s.ReplaceOpenAlertsWithProgress(ctx, orgID, repoID, alerts, nil)
+}
+
+// ReplaceOpenAlertsWithProgress reports rows written inside the transaction.
+// Completion of the callback does not imply the transaction has committed.
+func (s *Store) ReplaceOpenAlertsWithProgress(ctx context.Context, orgID int64, repoID *int64, alerts []Alert, progress func(done, total int)) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -240,7 +246,10 @@ func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int6
 	if err != nil {
 		return err
 	}
-	for _, a := range alerts {
+	if progress != nil {
+		progress(0, len(alerts))
+	}
+	for i, a := range alerts {
 		reported := a.ReportedSeverity
 		if reported == "" {
 			reported = a.Severity
@@ -262,6 +271,9 @@ func (s *Store) ReplaceOpenAlerts(ctx context.Context, orgID int64, repoID *int6
 			a.OrgID, a.RepositoryID, a.GitHubID, a.Tool, a.ToolVersion, a.ToolGUID, a.RuleID, a.RuleName, a.RuleDescription, string(tags), priority, priority, reported, source, a.Message, a.Ref, a.CommitSHA, a.AnalysisKey, a.Environment, a.Category, a.Path, a.StartLine, a.EndLine, a.StartColumn, a.EndColumn, a.URL, a.CreatedAt.UTC().Format(time.RFC3339Nano), a.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			return fmt.Errorf("store alert %d: %w", a.GitHubID, err)
+		}
+		if progress != nil {
+			progress(i+1, len(alerts))
 		}
 	}
 	return tx.Commit()

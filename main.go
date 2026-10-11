@@ -15,6 +15,7 @@ import (
 
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/app"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/config"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/console"
 )
 
 var Version = "dev"
@@ -40,15 +41,16 @@ func env(key, fallback string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage:")
-	fmt.Fprintln(os.Stderr, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]")
-	fmt.Fprintln(os.Stderr, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
-	fmt.Fprintln(os.Stderr, "  ghscanscope web [--db PATH] [--addr ADDRESS]")
-	fmt.Fprintln(os.Stderr, "  ghscanscope version")
+	out := console.Writer{Out: os.Stderr, Palette: console.New(), Code: console.Cyan}
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]")
+	fmt.Fprintln(out, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
+	fmt.Fprintln(out, "  ghscanscope web [--db PATH] [--addr ADDRESS]")
+	fmt.Fprintln(out, "  ghscanscope version")
 }
 
 func syncFlags(args []string) (config.SyncOptions, string, error) {
-	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs := console.FlagSet("sync")
 	org := fs.String("org", env("GHSCAN_SCOPE_ORG", ""), "GitHub organization (or GHSCAN_SCOPE_ORG)")
 	repo := fs.String("repo", env("GHSCAN_SCOPE_REPO", ""), "single OWNER/REPO (or GHSCAN_SCOPE_REPO)")
 	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
@@ -84,7 +86,7 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "version":
-		fmt.Println(versionString(Version))
+		fmt.Println(console.New().Label(versionString(Version)))
 		return
 	case "sync":
 		opts, dbFlag, parseErr := syncFlags(os.Args[2:])
@@ -99,11 +101,11 @@ func main() {
 				dbPath, err = config.DatabasePath(dbFlag)
 			}
 			if err == nil {
-				err = app.RunSync(ctx, dbPath, resolvedOrg, resolvedRepo, os.Stdout)
+				err = app.RunSyncWithProgress(ctx, dbPath, resolvedOrg, resolvedRepo, os.Stdout, os.Stderr)
 			}
 		}
 	case "web":
-		fs := flag.NewFlagSet("web", flag.ContinueOnError)
+		fs := console.FlagSet("web")
 		db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
 		addr := fs.String("addr", env("GHSCAN_SCOPE_ADDR", "127.0.0.1:8080"), "listen address (or GHSCAN_SCOPE_ADDR)")
 		if err = fs.Parse(os.Args[2:]); err == nil {
@@ -120,7 +122,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		log.Printf("error: %v", err)
+		log.Print(console.New().Color(console.Red, fmt.Sprintf("error: %v", err)))
 		os.Exit(1)
 	}
 }

@@ -67,6 +67,7 @@ func findingsCache(t *testing.T) string {
 }
 
 func TestFindingsCommand(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	db := findingsCache(t)
 	for _, key := range []string{"GHSCAN_SCOPE_ORG", "GHSCAN_SCOPE_REPO", "GHSCAN_SCOPE_DB", "GITHUB_TOKEN", "GH_TOKEN"} {
 		t.Setenv(key, "")
@@ -188,5 +189,32 @@ func TestFindingsCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("created missing database: %v", err)
+	}
+}
+
+func TestFindingsColorAndJSON(t *testing.T) {
+	db := findingsCache(t)
+	for _, key := range []string{"GHSCAN_SCOPE_ORG", "GHSCAN_SCOPE_REPO", "GHSCAN_SCOPE_DB"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("NO_COLOR", "")
+	if err := os.Unsetenv("NO_COLOR"); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{nil, {"--verbose"}, {"--level", "critical,high"}} {
+		var b bytes.Buffer
+		if err := runFindings(context.Background(), append([]string{"--db", db, "--repo", "Owner/repo"}, args...), &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(b.String(), "\x1b[") {
+			t.Fatalf("missing color: %q", b.String())
+		}
+	}
+	var b bytes.Buffer
+	if err := runFindings(context.Background(), []string{"--db", db, "--repo", "Owner/repo", "--json"}, &b); err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(b.Bytes()) || strings.Contains(b.String(), "\x1b") || strings.Contains(b.String(), `\u001b`) {
+		t.Fatalf("JSON contains color: %s", b.String())
 	}
 }

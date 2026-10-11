@@ -23,6 +23,14 @@ type Result struct {
 type Syncer struct {
 	Store  *store.Store
 	GitHub GitHub
+	// OnProgress reports completed work in the current phase; total=-1 means unknown.
+	OnProgress func(phase string, completed, total int)
+}
+
+func (s *Syncer) progress(phase string, done, total int) {
+	if s.OnProgress != nil {
+		s.OnProgress(phase, done, total)
+	}
 }
 
 func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err error) {
@@ -55,17 +63,20 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 	repoIDs := map[string]int64{}
 	var targetRepoID *int64
 	if repo == "" {
+		s.progress("Downloading repositories", 0, -1)
 		repos, e := s.GitHub.OrganizationRepositories(ctx, org)
 		if e != nil {
 			return result, e
 		}
-		for _, r := range repos {
+		s.progress("Caching repositories", 0, len(repos))
+		for i, r := range repos {
 			id, e := s.upsertRepo(ctx, orgID, r)
 			if e != nil {
 				return result, e
 			}
 			repoIDs[strings.ToLower(r.FullName)] = id
 			result.Repositories++
+			s.progress("Caching repositories", i+1, len(repos))
 		}
 	} else {
 		parts := strings.Split(repo, "/")
@@ -75,10 +86,12 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 		if !strings.EqualFold(parts[0], org) {
 			return result, fmt.Errorf("repository owner %q does not match organization %q", parts[0], org)
 		}
+		s.progress("Downloading repository", 0, -1)
 		r, e := s.GitHub.Repository(ctx, parts[0], parts[1])
 		if e != nil {
 			return result, e
 		}
+		s.progress("Caching repository", 0, 1)
 		id, e := s.upsertRepo(ctx, orgID, r)
 		if e != nil {
 			return result, e
@@ -86,7 +99,9 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 		repoIDs[strings.ToLower(r.FullName)] = id
 		targetRepoID = &id
 		result.Repositories = 1
+		s.progress("Caching repository", 1, 1)
 	}
+	s.progress("Downloading alerts", 0, -1)
 	var alerts []gh.Alert
 	if repo == "" {
 		alerts, err = s.GitHub.OrganizationAlerts(ctx, org)
@@ -98,7 +113,8 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 		return result, err
 	}
 	stored := make([]store.Alert, 0, len(alerts))
-	for _, a := range alerts {
+	s.progress("Preparing alerts", 0, len(alerts))
+	for i, a := range alerts {
 		var repoID int64
 		if targetRepoID != nil {
 			// Repository-scoped code-scanning responses do not consistently include
@@ -134,10 +150,12 @@ func (s *Syncer) Sync(ctx context.Context, org, repo string) (result Result, err
 			StartColumn: loc.StartColumn, EndColumn: loc.EndColumn,
 			URL: a.HTMLURL, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, Open: true,
 		})
+		s.progress("Preparing alerts", i+1, len(alerts))
 	}
-	if err = s.Store.ReplaceOpenAlerts(ctx, orgID, targetRepoID, stored); err != nil {
+	if err = s.Store.ReplaceOpenAlertsWithProgress(ctx, orgID, targetRepoID, stored, func(done, total int) { s.progress("Caching alerts", done, total) }); err != nil {
 		return result, err
 	}
+	s.progress("Finalizing cache", 0, -1)
 	result.Alerts = len(stored)
 	return result, nil
 }

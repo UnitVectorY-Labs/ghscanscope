@@ -29,6 +29,10 @@ Use `ghscanscope sync --help`, `ghscanscope findings --help`, or `ghscanscope we
 
 Download repository metadata and open GitHub code-scanning alerts into SQLite. The command prints the number of repositories and open alerts synced, the organization, and elapsed time.
 
+Progress goes to standard error, leaving the final summary on standard output. In a terminal, a single animated bar shows the current phase. Download phases show activity and the number of items received as GitHub pages arrive; percentages are not estimated while the total is unknown. Repository caching and alert preparation/caching show completed/total counts and a percentage. The final success indicator appears only after the cache transaction and sync status have been saved. Failures and cancellation stop the animation and show a failure indicator.
+
+Both organization-wide and single-repository syncs show progress, including repositories with no findings. These bars describe fetching and caching GitHub results, not running scanners. When standard error is redirected, progress uses stable lines with no animation or carriage returns, limiting counted updates to about twenty per phase.
+
 | Flag | Environment variable | Default |
 | --- | --- | --- |
 | `--org` | `GHSCAN_SCOPE_ORG` | Determined from the selected repository or `.ghscanscope` |
@@ -69,7 +73,7 @@ ghscanscope findings --org UnitVectorY-Labs --repo ghscanscope --level high --js
 
 Detailed text and JSON include the alert number, priority, reported severity and source, scanner name/version/GUID, rule ID/name/description/tags, finding message, file path, start/end lines and columns, ref, commit SHA, analysis key, environment, category, alert URL, and created/updated timestamps. Findings are ordered by priority (critical first, unknown last), then alert number. Source code and additional remediation text are not stored in the cache and are not fetched by this command. Missing locations remain empty paths and zero line/column values in JSON; text explicitly marks unreported locations.
 
-The JSON object has `repository`, `repository_url`, `repository_cached_at`, `total_open`, `matching`, `by_level`, `by_scanner`, and `findings`. Counts by level/scanner describe the matching findings; `total_open` is the repository's count before filters. `findings` is always an array, including `[]` for no matches. Individual records use snake_case keys, such as `rule_description`, `reported_severity`, `path`, `start_line`, and `commit_sha`. JSON contains no text preamble; errors go to standard error.
+The JSON object has `repository`, `repository_url`, `repository_cached_at`, `total_open`, `matching`, `by_level`, `by_scanner`, and `findings`. Counts by level/scanner describe the matching findings; `total_open` is the repository's count before filters. `findings` is always an array, including `[]` for no matches. Individual records use snake_case keys, such as `rule_description`, `reported_severity`, `path`, `start_line`, and `commit_sha`. JSON contains no text preamble or color codes; errors go to standard error.
 
 This exposes the current cached open alerts and each alert's most recent stored instance, just as the web view does. SQLite does not retain separate scan snapshots. `repository_cached_at` is the repository metadata refresh time, not a scanner completion time or a guarantee that the last alert refresh succeeded. A failed alert fetch leaves previously cached findings available. Run `sync` to refresh the cache before exporting when freshness matters. Retired alerts are excluded. Zero matching findings does not establish scan coverage.
 
@@ -91,6 +95,19 @@ The dashboard includes actions to refresh stored organizations or repositories u
 ### version
 
 Print the application version, Go version, operating system, and architecture.
+
+## Output Colors
+
+All human-readable command output uses color by default: findings headings and priorities, sync summaries and progress, web startup messages, version output, help, and errors. Critical/high findings use red, medium uses yellow, and low uses cyan; labels, status, and supporting information use consistent accents.
+
+Define `NO_COLOR` to disable color across commands. Any value, including an empty value, disables it:
+
+```sh
+NO_COLOR= ghscanscope findings --verbose
+NO_COLOR=1 ghscanscope sync --repo UnitVectorY-Labs/ghscanscope
+```
+
+Color is also enabled for redirected human-readable text; set `NO_COLOR` when exporting plain text. `findings --json` always emits uncolored JSON, regardless of `NO_COLOR`. Sync progress remains visible without color; terminal animation depends on whether standard error is a terminal, independently of the color setting.
 
 ## Configuration Precedence
 

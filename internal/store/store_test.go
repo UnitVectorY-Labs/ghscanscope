@@ -52,3 +52,43 @@ func TestCanonicalPriority(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertProgressDoesNotChangeTransactionalReplacement(t *testing.T) {
+	s, err := Open(t.TempDir() + "/progress.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	org, err := s.EnsureOrg(ctx, "acme", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := s.UpsertRepository(ctx, Repository{OrgID: org, GitHubID: 1, Owner: "acme", Name: "one", FullName: "acme/one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := Alert{OrgID: org, RepositoryID: repo, GitHubID: 1, Severity: "high", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	var events [][2]int
+	progress := func(done, total int) { events = append(events, [2]int{done, total}) }
+	if err := s.ReplaceOpenAlertsWithProgress(ctx, org, &repo, []Alert{original}, progress); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0] != [2]int{0, 1} || events[1] != [2]int{1, 1} {
+		t.Fatalf("progress: %v", events)
+	}
+	events = nil
+	invalid := original
+	invalid.GitHubID = 2
+	invalid.RepositoryID = 999
+	if err := s.ReplaceOpenAlertsWithProgress(ctx, org, &repo, []Alert{invalid}, progress); err == nil {
+		t.Fatal("expected foreign key failure")
+	}
+	if len(events) != 1 || events[0] != [2]int{0, 1} {
+		t.Fatalf("reported uncompleted rows: %v", events)
+	}
+	alerts, err := s.OpenAlerts(ctx)
+	if err != nil || len(alerts) != 1 || alerts[0].GitHubID != 1 {
+		t.Fatalf("failed replacement changed cache: %v %v", alerts, err)
+	}
+}

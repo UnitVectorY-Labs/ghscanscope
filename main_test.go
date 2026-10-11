@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -35,5 +37,44 @@ func TestSyncFlagsPrecedence(t *testing.T) {
 	opts, _, err = syncFlags([]string{"--org=", "--repo="})
 	if err != nil || !opts.OrgSet || !opts.RepoSet || opts.Org != "" || opts.Repo != "" {
 		t.Fatalf("explicit empty flags: %+v %v", opts, err)
+	}
+}
+
+func TestCLIProcess(t *testing.T) {
+	if os.Getenv("GHSCANSCOPE_TEST_CLI") != "1" {
+		return
+	}
+	for i, arg := range os.Args {
+		if arg == "--" {
+			os.Args = append([]string{"ghscanscope"}, os.Args[i+1:]...)
+			break
+		}
+	}
+	main()
+	os.Exit(0)
+}
+
+func TestCLIColor(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		for _, args := range [][]string{{"version"}, {"sync", "--help"}, {"findings", "--help"}, {"web", "--help"}, {"unknown"}, {"sync", "--bad"}} {
+			cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestCLIProcess$", "--"}, args...)...)
+			for _, e := range os.Environ() {
+				if !strings.HasPrefix(e, "NO_COLOR=") {
+					cmd.Env = append(cmd.Env, e)
+				}
+			}
+			cmd.Env = append(cmd.Env, "GHSCANSCOPE_TEST_CLI=1")
+			if noColor {
+				cmd.Env = append(cmd.Env, "NO_COLOR=")
+			}
+			output, err := cmd.CombinedOutput()
+			if len(output) == 0 {
+				t.Fatalf("%v: no output (%v)", args, err)
+			}
+			colored := strings.Contains(string(output), "\x1b[")
+			if colored == noColor {
+				t.Fatalf("%v NO_COLOR=%v: %q", args, noColor, output)
+			}
+		}
 	}
 }

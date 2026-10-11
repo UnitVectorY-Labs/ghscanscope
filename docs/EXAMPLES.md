@@ -132,6 +132,23 @@ The parent directory is created automatically. To keep using the previous workin
 5. Open an occurrence to inspect its location and GitHub links.
 6. Bookmark the filtered URL to return to that view.
 
+## Plain Text and Sync Progress Logs
+
+Disable color for any command, including help and errors:
+
+```bash
+NO_COLOR= ghscanscope findings --verbose > findings.txt
+NO_COLOR= ghscanscope version
+```
+
+Capture the sync summary and progress separately:
+
+```bash
+NO_COLOR= ghscanscope sync --repo UnitVectorY-Labs/ghscanscope > sync-summary.txt 2> sync-progress.log
+```
+
+A terminal displays one animated progress bar; redirected progress is written as stable lines. Download phases report received items without guessing a percentage. Caching phases show actual completed/total counts. Color settings do not affect JSON exports.
+
 ## Troubleshooting
 
 | Symptom | What to check |
