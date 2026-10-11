@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -85,7 +86,7 @@ func get(t *testing.T, handler http.Handler, target string) string {
 func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/alerts")
-	for _, want := range []string{"Alert groups", "Repositories", "Reflected XSS", "2 groups · 4 occurrences", "Repositories", "Occurrences", `aria-label="Filter priorities"`, ">High<", "UnitVectorY Labs</a>", "MIT License</a>", "<strong>ghscanscope</strong> on GitHub", "Version: v1.2.3"} {
+	for _, want := range []string{"Issues across repositories", "Repositories", "Reflected XSS", "1 <span class=\"count-total\">/ 2</span> issue groups · 3 <span class=\"count-total\">/ 4</span> occurrences", "Repositories", "Occurrences", `aria-label="Filter priorities"`, "High 3", "UnitVectorY Labs</a>", "MIT License</a>", "<strong>ghscanscope</strong> on GitHub", "Version: v1.2.3"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("alerts page missing %q", want)
 		}
@@ -93,10 +94,14 @@ func TestAlertsPageGroupsEquivalentFindingsAndDefaultsToSeverityDescending(t *te
 	if strings.Contains(body, "Archived critical") {
 		t.Fatal("archived repository alert appeared in the web interface")
 	}
-	if strings.Index(body, "Reflected XSS") > strings.Index(body, "Style issue") {
-		t.Fatal("alerts are not sorted by descending severity by default")
+	if strings.Contains(body, "Style issue") {
+		t.Fatal("default attention view included low priority finding")
 	}
-	if !strings.Contains(body, `<td class="alert-count">2</td><td class="alert-count has-alerts mobile-hide">3</td>`) {
+	all := get(t, f.handler, "/alerts?scope=all")
+	if !strings.Contains(all, "Style issue") || strings.Index(all, "Reflected XSS") > strings.Index(all, "Style issue") {
+		t.Fatal("all priorities view did not preserve priority ordering")
+	}
+	if !strings.Contains(body, `>2 <span class="count-total">/ 2</span></a><span class="secondary-text">affected repositories`) || !strings.Contains(body, `>3 <span class="count-total">/ 3</span></a><span class="secondary-text">open findings`) {
 		t.Fatal("equivalent finding counts are incorrect")
 	}
 }
@@ -150,7 +155,7 @@ func TestAlertFiltersAreMultiSelectAndSortingIsShareable(t *testing.T) {
 func TestRepositoriesPageIncludesZeroAlertRepository(t *testing.T) {
 	f := newFixture(t)
 	body := get(t, f.handler, "/repositories")
-	for _, want := range []string{"acme/zero", "Primary service", ">Total ", "High 2", "Low 1", `aria-label="Filter repository priorities"`, `aria-label="View repository alerts"`} {
+	for _, want := range []string{"acme/zero", "Primary service", "Open occurrences", "High 2", "Low 1", `aria-label="Filter priorities"`, `aria-label="View repository alerts"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("repositories page missing %q", want)
 		}
@@ -183,7 +188,7 @@ func TestRepositoryRuleAndAlertDrillDowns(t *testing.T) {
 		t.Fatalf("repository drill-down is incomplete")
 	}
 	rule := get(t, f.handler, "/rules?tool=CodeQL&rule=go%2Fxss")
-	if strings.Contains(rule, "Affected repositories") || !strings.Contains(rule, "<strong>3</strong> occurrences across <strong>2</strong> repositories") || strings.Count(rule, "<table") != 1 || !strings.Contains(rule, "acme/one") || !strings.Contains(rule, `aria-label="View alert details"`) {
+	if strings.Contains(rule, "Affected repositories") || !strings.Contains(rule, "across <b>2 <span class=\"count-total\">/ 2</span></b> affected repositories") || !strings.Contains(rule, "Where this issue occurs") || strings.Count(rule, "<table") != 1 || !strings.Contains(rule, "acme/one") || !strings.Contains(rule, `aria-label="View alert details"`) {
 		t.Fatalf("rule drill-down is incomplete")
 	}
 	alert := get(t, f.handler, "/alerts/"+strconv.FormatInt(f.alertID, 10))
@@ -202,7 +207,7 @@ func TestFiltersSubmitImmediatelyThroughHTMX(t *testing.T) {
 			t.Errorf("immediate filter markup missing %q", want)
 		}
 	}
-	if strings.Contains(body, ">Apply</button>") || !strings.Contains(body, `class="column-filter active" open`) {
+	if strings.Contains(body, ">Apply</button>") || !strings.Contains(body, `class="facet active" open`) {
 		t.Fatal("filters still require Apply or do not remain open after an HTMX swap")
 	}
 }
@@ -289,5 +294,169 @@ func TestHTMXServerFailuresPreservePageAndEscapeErrors(t *testing.T) {
 				t.Fatal("upstream error is not safely escaped")
 			}
 		})
+	}
+}
+
+func TestDrilldownsPreserveInvestigation(t *testing.T) {
+	f := newFixture(t)
+	r := httptest.NewRequest(http.MethodGet, "/alerts?tool=CodeQL&repo=acme%2Fone&q=xss&sort=alerts&dir=desc", nil)
+	page := Page{View: "alerts", Filters: queryFilters(r)}
+	page.Filters["priority"] = []string{"Critical", "High"}
+	(&Server{}).preparePage(&page, r, dataSet{})
+	drill := drillURL(r, page.Filters, "/rules", url.Values{"tool": {"CodeQL"}, "rule": {"go/xss"}})
+	u, _ := url.Parse(drill)
+	if u.Query().Get("repo") != "acme/one" || len(u.Query()["priority"]) != 2 || u.Query().Get("q") != "xss" {
+		t.Fatalf("group drill lost filters: %s", drill)
+	}
+	body := get(t, f.handler, drill)
+	if !strings.Contains(body, "across <b>1 <span class=\"count-total\">/ 2</span></b> affected repositories") {
+		t.Fatal("group drill did not respect repository scope")
+	}
+	if !strings.Contains(body, "Back to issues") {
+		t.Fatal("group back link is not labeled by its parent")
+	}
+	for _, value := range []string{"https://example.test/alerts", "//example.test/alerts", "/sync", "/alerts/nope"} {
+		if safeBack(value) != "" {
+			t.Errorf("unsafe back accepted: %s", value)
+		}
+	}
+	if safeBack("/alerts/7?from=%2Falerts") == "" {
+		t.Fatal("occurrence context was rejected")
+	}
+}
+
+func TestRepositorySearchDoesNotFilterItsFindingsOnDrilldown(t *testing.T) {
+	f := newFixture(t)
+	body := get(t, f.handler, "/repositories?q=Primary+service")
+	if !strings.Contains(body, "Primary service") {
+		t.Fatal("repository description search failed")
+	}
+	page := Page{View: "repositories", CurrentURL: "/repositories?q=Primary+service", Filters: map[string][]string{"q": {"Primary service"}, "priority": {"High"}}}
+	link := pageLink(page, "/repositories/"+strconv.FormatInt(f.repositoryID, 10), nil)
+	u, _ := url.Parse(link)
+	if u.Query().Has("q") || u.Query().Get("priority") != "High" {
+		t.Fatalf("repository drill filter semantics are incorrect: %s", link)
+	}
+	if !strings.Contains(get(t, f.handler, link), "Reflected XSS") {
+		t.Fatal("repository search drill lost findings")
+	}
+}
+
+func TestGroupPriorityBreakdownAndReachOrdering(t *testing.T) {
+	alerts := []store.Alert{
+		{RepositoryID: 1, Tool: "A", RuleID: "common", Priority: "High"},
+		{RepositoryID: 2, Tool: "A", RuleID: "common", Priority: "High"},
+		{RepositoryID: 2, Tool: "A", RuleID: "common", Priority: "Low"},
+	}
+	for i := 0; i < 10; i++ {
+		alerts = append(alerts, store.Alert{RepositoryID: 3, Tool: "A", RuleID: "localized", Priority: "High"})
+	}
+	groups := groupAlerts(alerts)
+	sortGroups(groups, "severity", "desc")
+	if groups[0].RuleID != "common" || groups[0].RepositoryCount != 2 || groups[0].AlertCount != 3 || groups[0].High != 2 || groups[0].Low != 1 {
+		t.Fatalf("priority/reach aggregation is misleading: %+v", groups)
+	}
+}
+
+func TestSearchMatchesEvidenceAndRepositoryCountsReflectScannerFilter(t *testing.T) {
+	f := newFixture(t)
+	body := get(t, f.handler, "/alerts?scope=all&q=untrusted+server.go")
+	if !strings.Contains(body, "1 <span class=\"count-total\">/ 2</span> issue groups · 1 <span class=\"count-total\">/ 4</span> occurrences") {
+		t.Fatal("evidence search did not find exact occurrence scope")
+	}
+	body = get(t, f.handler, "/repositories?tool=MissingScanner")
+	if !strings.Contains(body, "No repositories match these filters") {
+		t.Fatal("scanner filter retained repositories without scanner findings")
+	}
+	body = get(t, f.handler, "/repositories?priority=High")
+	if strings.Contains(body, "Low 1") {
+		t.Fatal("repository breakdown does not reflect active priorities")
+	}
+	alert := get(t, f.handler, "/alerts/"+strconv.FormatInt(f.alertID, 10))
+	if strings.Contains(alert, `aria-label="Summary statistics"`) || !strings.Contains(alert, "Reported evidence") || !strings.Contains(alert, "Scan details &amp; priority source") {
+		t.Fatal("occurrence detail hierarchy is incomplete")
+	}
+}
+
+type refreshGitHub struct{ unusedGitHub }
+
+func (refreshGitHub) Repository(context.Context, string, string) (gh.Repository, error) {
+	r := gh.Repository{ID: 1, Name: "one", FullName: "acme/one", HTMLURL: "https://github.com/acme/one", Visibility: "public"}
+	r.Owner.Login = "acme"
+	return r, nil
+}
+func TestRepositoryRefreshRetainsCanonicalFilterURLs(t *testing.T) {
+	f := newFixture(t)
+	handler := New(f.store, refreshGitHub{}, "test")
+	path := "/repositories/" + strconv.FormatInt(f.repositoryID, 10)
+	r := httptest.NewRecorder()
+	handler.ServeHTTP(r, httptest.NewRequest(http.MethodPost, path+"/sync?priority=High&from=%2Frules%3Ftool%3DCodeQL%26rule%3Dgo%252Fxss", nil))
+	body := r.Body.String()
+	if r.Code != http.StatusOK || !strings.Contains(body, `hx-get="`+path+`"`) || strings.Contains(body, `hx-get="`+path+`/sync"`) || !strings.Contains(body, "Back to issue group") || !strings.Contains(body, `value="High" checked`) {
+		t.Fatalf("refresh broke canonical filter navigation: %d %s", r.Code, body)
+	}
+}
+
+func TestIssuePresentationMakesScannerExplicitAndOmitsZeroPriorities(t *testing.T) {
+	f := newFixture(t)
+	listing := get(t, f.handler, "/alerts")
+	if strings.Contains(listing, "Critical &amp; high") || strings.Contains(listing, "All priorities") || strings.Contains(listing, "Style issue") {
+		t.Fatal("priority shortcuts remain or the default priority scope changed")
+	}
+	for _, target := range []string{"/rules?tool=CodeQL&rule=go%2Fxss", "/alerts/" + strconv.FormatInt(f.alertID, 10)} {
+		body := get(t, f.handler, target)
+		if !strings.Contains(body, `class="scanner-attribution"`) || !strings.Contains(body, `Detected by</span><span class="scanner scanner-codeql">CodeQL</span>`) {
+			t.Fatalf("scanner attribution is not prominent on %s", target)
+		}
+		for _, zero := range []string{"Critical 0", "High 0", "Medium 0", "Low 0", "Unknown 0"} {
+			if strings.Contains(body, zero) {
+				t.Errorf("%s includes irrelevant %q", target, zero)
+			}
+		}
+	}
+	for tool, want := range map[string]string{"CodeQL": "codeql", "Semgrep OSS": "semgrep", "govulncheck": "govulncheck", "zizmor": "zizmor", "Unknown Scanner": "other"} {
+		if scannerClass(tool) != want {
+			t.Errorf("scanner class for %s = %s", tool, scannerClass(tool))
+		}
+	}
+}
+
+func TestFilteredCountsShowUnfilteredTotals(t *testing.T) {
+	f := newFixture(t)
+	for _, tc := range []struct {
+		url   string
+		wants []string
+	}{
+		{"/alerts", []string{"<strong>3 <span class=\"count-total\">/ 4</span></strong>", "Low 0 <span class=\"count-total\">/ 1</span>", "High 3 <span class=\"count-total\">/ 3</span>", "matching / total before filters"}},
+		{"/alerts?priority=Low", []string{"<strong>1 <span class=\"count-total\">/ 4</span></strong>", "High 0 <span class=\"count-total\">/ 3</span>", "Low 1 <span class=\"count-total\">/ 1</span>"}},
+		{"/rules?tool=CodeQL&rule=go%2Fxss&repo=acme%2Fone", []string{"<strong>2 <span class=\"count-total\">/ 3</span></strong>", "High 2 <span class=\"count-total\">/ 3</span>", "across <b>1 <span class=\"count-total\">/ 2</span></b>"}},
+		{"/repositories/" + strconv.FormatInt(f.repositoryID, 10) + "?priority=Low", []string{"<strong>0 <span class=\"count-total\">/ 2</span></strong>", "High 0 <span class=\"count-total\">/ 2</span>"}},
+		{"/repositories?priority=High", []string{`<span class="metric ">1 <span class="count-total">/ 2</span></span>`, `High 1 <span class="count-total">/ 1</span>`}},
+		{"/repositories", []string{`<span class="metric zero">0 <span class="count-total">/ 0</span></span>`}},
+		{"/rules?tool=CodeQL&rule=go%2Fxss", []string{`<b>1 <span class="count-total">/ 1</span></b> occurrences`, `High 1 <span class="count-total">/ 1</span>`}},
+		{"/repositories?priority=Low", []string{"<strong>1 <span class=\"count-total\">/ 4</span></strong>", "Low 1 <span class=\"count-total\">/ 1</span>", "High 0 <span class=\"count-total\">/ 3</span>"}},
+	} {
+		body := get(t, f.handler, tc.url)
+		for _, want := range tc.wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", tc.url, want)
+			}
+		}
+	}
+}
+
+func TestRowsHidePrioritiesExcludedByFilters(t *testing.T) {
+	f := newFixture(t)
+	for _, target := range []string{"/alerts?priority=Low", "/repositories?priority=Low", "/rules?tool=CodeQL&rule=go%2Fxss&priority=Low"} {
+		body := get(t, f.handler, target)
+		// Summary counts can include zero matches; rows and issue overviews cannot.
+		if start := strings.Index(body, `<div class="tags">`); start >= 0 {
+			rows := body[start:]
+			for _, priority := range []string{"Critical", "High", "Medium", "Low", "Unknown"} {
+				if strings.Contains(rows, priority+` 0 <span class="count-total">`) {
+					t.Errorf("%s shows filtered-out %s in row/details", target, priority)
+				}
+			}
+		}
 	}
 }
