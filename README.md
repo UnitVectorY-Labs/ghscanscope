@@ -4,24 +4,42 @@
 
 A local-first workbench for syncing, triaging, and finding patterns in GitHub code-scanning alerts across repositories.
 
-## Usage
+## Key Features
 
-```sh
-go build -o ghscanscope .
-./ghscanscope sync --org UnitVectorY-Labs
-./ghscanscope web
-```
+- Sync an entire organization or a single repository's open code-scanning alerts.
+- Detect GitHub repositories from local checkouts, including subdirectories and worktrees.
+- Configure organization folders with a `.ghscanscope` property file.
+- Share findings across working directories in a local SQLite database.
+- Compare findings by scanner and rule with search, filters, and GitHub links.
 
-The SQLite database defaults to `.ghscanscope.db` and the web UI to
-`http://127.0.0.1:8080`. Authentication is read from `GITHUB_TOKEN`, `GH_TOKEN`,
-or the active `gh auth login` credential. Configuration can also be supplied by
-`GHSCAN_SCOPE_ORG`, `GHSCAN_SCOPE_REPO`, `GHSCAN_SCOPE_DB`, and
-`GHSCAN_SCOPE_ADDR`.
+## Quick Start
 
-`sync --repo OWNER/REPO` refreshes just one repository. A full organization sync
-catalogs every repository, including repositories without alerts, and refreshes
-all open code-scanning alerts. Alerts absent from a successful refresh are kept
-in SQLite as non-open history and omitted from the dashboard.
+1. Install:
+
+   ```sh
+   go install github.com/UnitVectorY-Labs/ghscanscope@latest
+   ```
+
+2. Authenticate with `gh auth login`, or set `GITHUB_TOKEN` or `GH_TOKEN`.
+
+3. Sync and browse:
+
+   ```sh
+   ghscanscope sync --org UnitVectorY-Labs
+   ghscanscope web
+   ```
+
+Open `http://127.0.0.1:8080`. The database defaults to
+`~/.local/share/ghscanscope/ghscanscope.db`, with its directory created automatically.
+
+From a GitHub checkout, `ghscanscope sync` refreshes just that repository using
+its `origin` remote. From an organization folder such as `~/github`, set
+`org=UnitVectorY-Labs` in `.ghscanscope` and run `ghscanscope sync` there.
+Command-line flags and environment variables override these defaults.
+
+See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), and
+[Examples](docs/EXAMPLES.md) for the full reference. The
+[documentation home](docs/README.md) lists the main capabilities.
 
 ## Exploring findings
 
