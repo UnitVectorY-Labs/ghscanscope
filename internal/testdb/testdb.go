@@ -28,7 +28,8 @@ func Target(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := "test_" + fmt.Sprintf("%x", uuid.New())
+	id := uuid.New()
+	schema := "test_" + fmt.Sprintf("%x", id[:])
 	if _, err := admin.ExecContext(context.Background(), "CREATE SCHEMA "+schema); err != nil {
 		admin.Close()
 		t.Fatal(err)
