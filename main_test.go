@@ -56,7 +56,7 @@ func TestCLIProcess(t *testing.T) {
 
 func TestCLIColor(t *testing.T) {
 	for _, noColor := range []bool{false, true} {
-		for _, args := range [][]string{{"version"}, {"sync", "--help"}, {"findings", "--help"}, {"web", "--help"}, {"unknown"}, {"sync", "--bad"}} {
+		for _, args := range [][]string{{"version"}, {"sync", "--help"}, {"findings", "--help"}, {"web", "--help"}, {"migrate", "--help"}, {"unknown"}, {"sync", "--bad"}} {
 			cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestCLIProcess$", "--"}, args...)...)
 			for _, e := range os.Environ() {
 				if !strings.HasPrefix(e, "NO_COLOR=") {

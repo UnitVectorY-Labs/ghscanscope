@@ -14,6 +14,7 @@ import (
 
 	gh "github.com/UnitVectorY-Labs/ghscanscope/internal/github"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/testdb"
 )
 
 type unusedGitHub struct{}
@@ -39,7 +40,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	s, err := store.Open(t.TempDir() + "/web.db")
+	s, err := store.Open(testdb.Target(t))
 	if err != nil {
 		t.Fatal(err)
 	}

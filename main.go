@@ -43,9 +43,10 @@ func env(key, fallback string) string {
 func usage() {
 	out := console.Writer{Out: os.Stderr, Palette: console.New(), Code: console.Cyan}
 	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH]")
-	fmt.Fprintln(out, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
-	fmt.Fprintln(out, "  ghscanscope web [--db PATH] [--addr ADDRESS]")
+	fmt.Fprintln(out, "  ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL]")
+	fmt.Fprintln(out, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
+	fmt.Fprintln(out, "  ghscanscope web [--db PATH_OR_URL] [--addr ADDRESS]")
+	fmt.Fprintln(out, "  ghscanscope migrate [--db PATH_OR_URL] up|down|status [VERSION]")
 	fmt.Fprintln(out, "  ghscanscope version")
 }
 
@@ -53,7 +54,7 @@ func syncFlags(args []string) (config.SyncOptions, string, error) {
 	fs := console.FlagSet("sync")
 	org := fs.String("org", env("GHSCAN_SCOPE_ORG", ""), "GitHub organization (or GHSCAN_SCOPE_ORG)")
 	repo := fs.String("repo", env("GHSCAN_SCOPE_REPO", ""), "single OWNER/REPO (or GHSCAN_SCOPE_REPO)")
-	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
+	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite path or postgres:// connection URL (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
 	if err := fs.Parse(args); err != nil {
 		return config.SyncOptions{}, "", err
 	}
@@ -106,7 +107,7 @@ func main() {
 		}
 	case "web":
 		fs := console.FlagSet("web")
-		db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
+		db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite path or postgres:// connection URL (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
 		addr := fs.String("addr", env("GHSCAN_SCOPE_ADDR", "127.0.0.1:8080"), "listen address (or GHSCAN_SCOPE_ADDR)")
 		if err = fs.Parse(os.Args[2:]); err == nil {
 			var dbPath string
@@ -115,6 +116,8 @@ func main() {
 				err = app.RunWeb(ctx, dbPath, *addr, Version)
 			}
 		}
+	case "migrate":
+		err = runMigrate(ctx, os.Args[2:], os.Stdout)
 	case "findings":
 		err = runFindings(ctx, os.Args[2:], os.Stdout)
 	default:

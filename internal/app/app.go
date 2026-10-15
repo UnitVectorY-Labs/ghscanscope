@@ -27,7 +27,7 @@ func RunSyncWithProgress(ctx context.Context, dbPath, org, repo string, out, pro
 }
 
 func runSync(ctx context.Context, dbPath, org, repo string, out, progressOut io.Writer, client *github.Client) error {
-	s, err := store.Open(dbPath)
+	s, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -56,7 +56,7 @@ func runSync(ctx context.Context, dbPath, org, repo string, out, progressOut io.
 }
 
 func RunWeb(ctx context.Context, dbPath, addr, version string) error {
-	s, err := store.Open(dbPath)
+	s, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

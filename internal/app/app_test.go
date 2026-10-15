@@ -14,6 +14,7 @@ import (
 
 	gh "github.com/UnitVectorY-Labs/ghscanscope/internal/github"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/testdb"
 )
 
 func TestSyncProgressAndSummary(t *testing.T) {
@@ -52,7 +53,7 @@ func TestSyncProgressAndSummary(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				path := filepath.Join(t.TempDir(), "cache.db")
+				path := testdb.Target(t)
 				var out, progress bytes.Buffer
 				err := runSync(context.Background(), path, "acme", target, &out, &progress, &gh.Client{HTTP: server.Client(), BaseURL: server.URL})
 				if fail {
@@ -71,6 +72,10 @@ func TestSyncProgressAndSummary(t *testing.T) {
 					alerts, err := s.OpenAlerts(context.Background())
 					if err != nil || len(alerts) != 1 {
 						t.Fatalf("alerts=%v err=%v", alerts, err)
+					}
+					var findings bytes.Buffer
+					if err := RunFindings(context.Background(), path, "ACME/ONE", FindingsOptions{JSON: true}, &findings); err != nil || !strings.Contains(findings.String(), `"total_open": 1`) {
+						t.Fatalf("findings=%s err=%v", findings.String(), err)
 					}
 				}
 				if strings.ContainsAny(out.String()+progress.String(), "\x1b\r") {
