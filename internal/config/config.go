@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
 )
 
 // SyncOptions records whether a value came from a flag or environment variable.
@@ -120,8 +122,12 @@ func directoryOrg(path string) (string, error) {
 	return org, nil
 }
 
-// DatabasePath uses the same home-relative convention on every operating system.
+// DatabasePath preserves PostgreSQL URLs and resolves SQLite paths using the
+// same home-relative default on every operating system.
 func DatabasePath(path string) (string, error) {
+	if store.IsPostgres(path) {
+		return path, nil
+	}
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {

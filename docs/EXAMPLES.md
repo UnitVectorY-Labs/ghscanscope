@@ -101,7 +101,7 @@ unset GHSCAN_SCOPE_ORG GHSCAN_SCOPE_REPO
 
 `--verbose` prints full details with or without filters; `--details` is an alias. `--ref` matches the exact full cached ref and is case-sensitive. Repeat `--ref` or comma-separate values to select multiple refs. It combines with level and scanner filters.
 
-These commands read only locally cached open findings and do not contact GitHub. Refresh with `sync` first when needed. Full records include scanner messages, rule descriptions, file paths and line/column ranges, and revision metadata. A successful export with no findings does not establish scan coverage.
+These commands read only cached open findings and do not contact GitHub. Refresh with `sync` first when needed. Full records include scanner messages, rule descriptions, file paths and line/column ranges, and revision metadata. A successful export with no findings does not establish scan coverage.
 
 ## Use a Separate Database
 
@@ -122,6 +122,38 @@ ghscanscope web
 ```
 
 The parent directory is created automatically. To keep using the previous working-directory database, pass `--db .ghscanscope.db` to each command.
+
+## Use PostgreSQL
+
+Create a database and role on your PostgreSQL server, then select it for all commands:
+
+```bash
+export GHSCAN_SCOPE_DB='postgresql://scanner@db.example.com/ghscanscope?sslmode=verify-full'
+ghscanscope migrate status
+ghscanscope migrate up
+ghscanscope sync --org UnitVectorY-Labs
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --json
+ghscanscope web
+```
+
+To select PostgreSQL for one command, use `--db 'postgresql://...'`. To select SQLite while the environment points at PostgreSQL, use `--db ./data/alerts.db`; `--db=` selects the default SQLite file. Switching targets does not transfer cached history. See [Databases](DATABASE.md) for provisioning, credentials, TLS, backups, and a local PostgreSQL 18 Docker example.
+
+## Manage Schema Versions
+
+Application commands apply pending upgrades automatically. For a planned rollout, stop active processes, back up the database, and migrate explicitly:
+
+```bash
+ghscanscope migrate --db ./data/alerts.db status
+ghscanscope migrate --db ./data/alerts.db up
+```
+
+For a deliberate rollback, with the application still stopped:
+
+```bash
+ghscanscope migrate --db ./data/alerts.db down 1
+```
+
+This removes priority/provenance fields and restores legacy severity values. Starting the current application again reapplies pending upgrades. **`down 0` deletes all cached data.** Read [migration operations](DATABASE.md#schema-upgrades-and-downgrades) before rolling back.
 
 ## Compare Findings Across Repositories
 
@@ -160,7 +192,8 @@ A terminal displays one animated progress bar; redirected progress is written as
 | Property file error | Use unquoted `org=NAME`; only `org`, blank lines, and whole-line comments are supported |
 | Repository owner does not match organization | Remove the organization override or set it to the selected repository's owner |
 | GitHub API permission error | Check the token's repository and code-scanning access; `GITHUB_TOKEN` overrides `GH_TOKEN` and GitHub CLI authentication |
+| PostgreSQL connection fails | Check the URL, server availability, database/role provisioning, network access, and TLS settings |
 | Database directory cannot be created | Check permissions or select a writable path with `--db` |
-| Previously synced data is missing | Use the same `--db` path for sync and web; older working-directory databases are not automatically moved |
+| Previously synced data is missing | Use the same `--db` path or URL for sync, findings, and web; older working-directory databases are not automatically moved |
 | No findings are visible | Broaden the priority and other filters, check sync status, and confirm that GitHub has open code-scanning alerts |
 | Listen address is already in use | Choose another address, such as `--addr 127.0.0.1:9090` |

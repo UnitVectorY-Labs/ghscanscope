@@ -31,7 +31,7 @@ func runFindings(ctx context.Context, args []string, out io.Writer) error {
 	fs := console.FlagSet("findings")
 	org := fs.String("org", env("GHSCAN_SCOPE_ORG", ""), "repository owner (or GHSCAN_SCOPE_ORG)")
 	repo := fs.String("repo", env("GHSCAN_SCOPE_REPO", ""), "OWNER/REPO, or REPO with --org (or GHSCAN_SCOPE_REPO); defaults to GitHub origin")
-	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite database path (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
+	db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "SQLite path or postgres:// connection URL (default ~/.local/share/ghscanscope/ghscanscope.db; or GHSCAN_SCOPE_DB)")
 	var levels, scanners, refs filterValues
 	fs.Var(&levels, "level", "priority: critical, high, medium, low, unknown; repeat or comma-separate")
 	fs.Var(&scanners, "scanner", "exact scanner name, ignoring case; repeat or comma-separate")

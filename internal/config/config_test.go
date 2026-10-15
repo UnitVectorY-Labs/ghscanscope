@@ -184,3 +184,12 @@ func TestResolveFindings(t *testing.T) {
 		t.Fatal("repository required outside a checkout")
 	}
 }
+
+func TestPostgresDatabaseTarget(t *testing.T) {
+	for _, target := range []string{"postgres://user:password@localhost/cache?sslmode=disable", "postgresql://localhost/cache"} {
+		got, err := DatabasePath(target)
+		if err != nil || got != target {
+			t.Fatalf("DatabasePath(%q)=%q, %v", target, got, err)
+		}
+	}
+}

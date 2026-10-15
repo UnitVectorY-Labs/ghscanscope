@@ -20,7 +20,7 @@ permalink: /install
 - **Git:** required for automatic detection of a checked-out repository; explicit organization/repository selection and directory configuration work without it
 - **GitHub authentication:** credentials with access to the repositories and their code-scanning alerts
 
-SQLite is included in the application; a separate database server is not required.
+SQLite is included in the application and remains the default; a separate database server is not required. Optional PostgreSQL support uses a pre-provisioned server database. See [Databases](DATABASE.md) for connection configuration and operational guidance.
 
 ## Installation Methods
 

@@ -9,7 +9,8 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - Sync an entire organization or a single repository's open code-scanning alerts.
 - Detect GitHub repositories from local checkouts, including subdirectories and worktrees.
 - Configure organization folders with a `.ghscanscope` property file.
-- Share findings across working directories in a local SQLite database.
+- Share findings across working directories in SQLite (the default), or use PostgreSQL for a shared server cache.
+- Manage schema upgrades and downgrades with the `migrate` command.
 - Read color-coded CLI output and follow sync progress; set `NO_COLOR` for plain text.
 - Export cached repository findings as plain text or JSON, filtered by priority and scanner.
 - Compare findings by scanner and rule with search, filters, and GitHub links.
@@ -33,6 +34,18 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 
 Open `http://127.0.0.1:8080`. The database defaults to
 `~/.local/share/ghscanscope/ghscanscope.db`, with its directory created automatically.
+
+SQLite needs no server or new configuration. To use PostgreSQL, pass a connection
+URL with `--db` or set `GHSCAN_SCOPE_DB` for all commands:
+
+```sh
+export GHSCAN_SCOPE_DB='postgresql://scanner@db.example.com/ghscanscope?sslmode=verify-full'
+ghscanscope migrate up
+ghscanscope sync --org UnitVectorY-Labs
+ghscanscope web
+```
+
+See [Databases](docs/DATABASE.md) for choosing a backend, migrations, and operations.
 
 From a GitHub checkout, `ghscanscope sync` refreshes just that repository using
 its `origin` remote. From an organization folder such as `~/github`, set
@@ -74,7 +87,7 @@ occurrences. Dedicated finding pages show the scanner message, location,
 reported revision, and scan metadata, with source and alert links to GitHub.
 Back links return to the filtered view you came from. Aggregate counts show
 **matching / total before filters**, including priority breakdowns. Listing
-totals cover all locally stored open findings; detail-page totals cover the
+totals cover all cached open findings; detail-page totals cover the
 selected repository or scanner rule. Repository search matches names and
 descriptions. Zero matching alerts does not establish scan coverage.
 

@@ -76,10 +76,12 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 	if err := opts.Validate(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return fmt.Errorf("cached database unavailable: %w; run ghscanscope sync first", err)
+	if !store.IsPostgres(dbPath) {
+		if _, err := os.Stat(dbPath); err != nil {
+			return fmt.Errorf("cached database unavailable: %w; run ghscanscope sync first", err)
+		}
 	}
-	s, err := store.Open(dbPath)
+	s, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

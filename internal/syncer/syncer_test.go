@@ -7,6 +7,7 @@ import (
 
 	gh "github.com/UnitVectorY-Labs/ghscanscope/internal/github"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/testdb"
 )
 
 type fakeGitHub struct {
@@ -62,7 +63,7 @@ func alert(number int64, repo gh.Repository, rule string) gh.Alert {
 }
 
 func TestFullSyncCatalogsZeroAlertRepositoriesAndClosesMissing(t *testing.T) {
-	s, err := store.Open(t.TempDir() + "/test.db")
+	s, err := store.Open(testdb.Target(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestFullSyncCatalogsZeroAlertRepositoriesAndClosesMissing(t *testing.T) {
 }
 
 func TestTargetedSyncDoesNotCloseOtherRepositoryAlerts(t *testing.T) {
-	s, err := store.Open(t.TempDir() + "/test.db")
+	s, err := store.Open(testdb.Target(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +141,7 @@ func TestTargetedSyncDoesNotCloseOtherRepositoryAlerts(t *testing.T) {
 }
 
 func TestSyncPreservesReportedSeverityAndUsesCanonicalPriority(t *testing.T) {
-	s, err := store.Open(t.TempDir() + "/test.db")
+	s, err := store.Open(testdb.Target(t))
 	if err != nil {
 		t.Fatal(err)
 	}

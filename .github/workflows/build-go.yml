@@ -47,3 +47,34 @@ jobs:
 
       - name: Run tests
         run: go test -coverprofile=coverage.txt -covermode=atomic ./...
+
+  postgres-integration:
+    name: PostgreSQL 18 Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ghscanscope
+          POSTGRES_PASSWORD: ghscanscope
+          POSTGRES_DB: ghscanscope
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ghscanscope"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GHSCAN_SCOPE_TEST_POSTGRES: postgres://ghscanscope:ghscanscope@127.0.0.1:5432/ghscanscope?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2' # GOVERSION
+      - run: go test -race -count=1 ./...
