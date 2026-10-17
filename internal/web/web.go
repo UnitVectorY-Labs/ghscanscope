@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -144,10 +145,20 @@ func New(s *store.Store, g syncer.GitHub, version string) http.Handler {
 	mux.HandleFunc("GET /rules", srv.ruleDetail)
 	mux.HandleFunc("POST /sync", srv.syncOrganization)
 	mux.HandleFunc("POST /repositories/{id}/sync", srv.syncRepository)
-	return mux
+	// Cached security findings must not be stored by browsers or shared CDNs.
+	// Vary also identifies the alternate representation to HTTP intermediaries.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Accept")
+		w.Header().Set("Cache-Control", "private, no-store")
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested page does not exist.")
+		return
+	}
 	http.Redirect(w, r, "/alerts", http.StatusTemporaryRedirect)
 }
 
@@ -189,7 +200,7 @@ func (s *Server) load(r *http.Request) (dataSet, error) {
 func (s *Server) alerts(w http.ResponseWriter, r *http.Request) {
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	filters := queryFilters(r)
@@ -221,13 +232,13 @@ func (s *Server) alerts(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("sync") == "success" {
 		page.Notice = "Organization data refreshed successfully."
 	}
-	s.render(w, page)
+	s.render(w, r, page)
 }
 
 func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	filters := queryFilters(r)
@@ -269,7 +280,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	page.Stats.TotalRepositories = len(repositoryViews)
 	page.SortLinks = sortLinks(r, "sort", "dir", []string{"repository", "organization", "visibility", "language", "alerts", "priority"})
 	s.preparePage(&page, r, d)
-	s.render(w, page)
+	s.render(w, r, page)
 }
 
 func (s *Server) repositoryDetail(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +290,7 @@ func (s *Server) repositoryDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	// Refresh renders this same page. Subsequent GET filters and sort links must
@@ -292,12 +303,12 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice s
 	}
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	repository, ok := d.RepoByID[id]
 	if !ok {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	filters := queryFilters(r)
@@ -320,18 +331,18 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request, notice s
 	page.SortColumn, page.SortDirection = sortColumn, sortDirection
 	page.SortLinks = sortLinks(r, "sort", "dir", []string{"rule", "severity", "tool", "location", "updated"})
 	s.preparePage(&page, r, d)
-	s.render(w, page)
+	s.render(w, r, page)
 }
 
 func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	tool, ruleID := strings.TrimSpace(r.URL.Query().Get("tool")), strings.TrimSpace(r.URL.Query().Get("rule"))
 	if tool == "" || ruleID == "" {
-		s.errorPage(w, http.StatusBadRequest, "Invalid request", "tool and rule are required")
+		s.errorPage(w, r, http.StatusBadRequest, "Invalid request", "tool and rule are required")
 		return
 	}
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	filters := queryFilters(r)
@@ -344,7 +355,7 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(allOccurrences) == 0 {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "No open alerts match this rule.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "No open alerts match this rule.")
 		return
 	}
 	alerts := make([]store.Alert, 0, len(allOccurrences))
@@ -400,18 +411,18 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	page.SortColumn, page.SortDirection = alertSort, alertDirection
 	page.AlertSortLinks = sortLinks(r, "alert_sort", "alert_dir", []string{"repository", "location", "message", "updated"})
 	s.preparePage(&page, r, d)
-	s.render(w, page)
+	s.render(w, r, page)
 }
 
 func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
 		return
 	}
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	var selectedAlert *store.Alert
@@ -422,7 +433,7 @@ func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if selectedAlert == nil {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested alert does not exist.")
 		return
 	}
 	repository := d.RepoByID[selectedAlert.RepositoryID]
@@ -432,18 +443,18 @@ func (s *Server) alertDetail(w http.ResponseWriter, r *http.Request) {
 	page.Alert, page.Repository = selectedAlert, &repoView
 	page.Stats.TotalRepositories = 1
 	s.preparePage(&page, r, d)
-	s.render(w, page)
+	s.render(w, r, page)
 }
 
 func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s.errorPage(w, http.StatusBadRequest, "Invalid request", err.Error())
+		s.errorPage(w, r, http.StatusBadRequest, "Invalid request", err.Error())
 		return
 	}
 	org := strings.TrimSpace(r.FormValue("org"))
 	organizations, err := s.store.Organizations(r.Context())
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	known := false
@@ -455,14 +466,14 @@ func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !known {
-		s.errorPage(w, http.StatusBadRequest, "Invalid request", "choose a stored organization")
+		s.errorPage(w, r, http.StatusBadRequest, "Invalid request", "choose a stored organization")
 		return
 	}
 	s.mu.Lock()
 	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), org, "")
 	s.mu.Unlock()
 	if err != nil {
-		s.errorPage(w, http.StatusBadGateway, "Sync failed", err.Error())
+		s.errorPage(w, r, http.StatusBadGateway, "Sync failed", err.Error())
 		return
 	}
 	http.Redirect(w, r, "/alerts?sync=success", http.StatusSeeOther)
@@ -471,24 +482,24 @@ func (s *Server) syncOrganization(w http.ResponseWriter, r *http.Request) {
 func (s *Server) syncRepository(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	d, err := s.load(r)
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	repository, ok := d.RepoByID[id]
 	if !ok {
-		s.errorPage(w, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
+		s.errorPage(w, r, http.StatusNotFound, "Page not found", "The requested repository does not exist.")
 		return
 	}
 	s.mu.Lock()
 	_, err = (&syncer.Syncer{Store: s.store, GitHub: s.github}).Sync(r.Context(), d.OrgNames[repository.OrgID], repository.FullName)
 	s.mu.Unlock()
 	if err != nil {
-		s.errorPage(w, http.StatusBadGateway, "Sync failed", err.Error())
+		s.errorPage(w, r, http.StatusBadGateway, "Sync failed", err.Error())
 		return
 	}
 	s.repositoryPage(w, r, "Repository data refreshed successfully.")
@@ -939,25 +950,39 @@ func codeURL(alert store.Alert) string {
 	return result
 }
 
-func (s *Server) render(w http.ResponseWriter, page Page) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.template.Execute(w, page); err != nil {
-		s.serverError(w, err)
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page Page) {
+	s.renderPage(w, r, http.StatusOK, page)
+}
+
+func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
+	s.errorPage(w, r, http.StatusInternalServerError, "Something went wrong", fmt.Sprintf("ghscanscope: %v", err))
+}
+
+// HTML errors remain full documents for htmx swaps; Markdown keeps the same status.
+func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int, title, message string) {
+	s.renderPage(w, r, status, Page{View: "error", Title: title, Eyebrow: "Error", ErrorMessage: message, Version: s.version})
+}
+
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, page Page) {
+	var body bytes.Buffer
+	contentType := "text/html; charset=utf-8"
+	if prefersMarkdown(r) {
+		contentType = "text/markdown; charset=utf-8"
+		body.WriteString(renderMarkdown(r, page))
+	} else if err := s.template.Execute(&body, page); err != nil {
+		// Buffer rendering so template failures never commit a partial 200 response.
+		http.Error(w, "Unable to render page", http.StatusInternalServerError)
+		return
 	}
-}
-
-func (s *Server) serverError(w http.ResponseWriter, err error) {
-	s.errorPage(w, http.StatusInternalServerError, "Something went wrong", fmt.Sprintf("ghscanscope: %v", err))
-}
-
-// errorPage renders a full HTML document so htmx 4, which swaps 4xx and 5xx
-// responses by default, can select #main-content or body and swap in a
-// styled error instead of wiping the target with a text/plain body.
-func (s *Server) errorPage(w http.ResponseWriter, status int, title, message string) {
-	page := Page{View: "error", Title: title, Eyebrow: "Error", ErrorMessage: message, Version: s.version}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
-	_ = s.template.Execute(w, page)
+	if r.Method != http.MethodHead {
+		// HTML in body has already been escaped by html/template.Execute above;
+		// Markdown is escaped by renderMarkdown and served with its own MIME type.
+		// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
+		_, _ = w.Write(body.Bytes())
+	}
 }
 
 // Names remain grounded in scanner text rather than inventing remediation advice.
