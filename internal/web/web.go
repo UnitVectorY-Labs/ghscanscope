@@ -975,8 +975,12 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, 
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
+		// HTML in body has already been escaped by html/template.Execute above;
+		// Markdown is escaped by renderMarkdown and served with its own MIME type.
+		// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 		_, _ = w.Write(body.Bytes())
 	}
 }

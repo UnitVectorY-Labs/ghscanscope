@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -274,6 +275,38 @@ func TestMarkdownEscapesScannerTextAndUnsafeLinks(t *testing.T) {
 	body := renderMarkdown(r, Page{View: "alert", Title: "Finding", Alert: &store.Alert{ToolGUID: "hidden-tool-guid"}, Repository: &RepoView{}, AllRepositories: []RepoView{{Repository: store.Repository{FullName: "hidden-repo"}}}})
 	if strings.Contains(body, "hidden-tool-guid") || strings.Contains(body, "hidden-repo") {
 		t.Fatal("non-display data leaked")
+	}
+}
+
+func TestBufferedRepresentationsEscapeUntrustedContent(t *testing.T) {
+	f := newFixture(t)
+	payload := `<img src=x onerror="alert('xss')"><script>alert('xss')</script>`
+	if _, err := f.store.DB.Exec("UPDATE alerts SET message=$1, rule_description=$1, url=$2 WHERE id=$3", payload, "javascript:alert(1)", f.alertID); err != nil {
+		t.Fatal(err)
+	}
+	for _, accept := range []string{"text/html", "text/markdown"} {
+		t.Run(accept, func(t *testing.T) {
+			w := negotiatedGet(f.handler, "/alerts/"+strconv.FormatInt(f.alertID, 10), accept)
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != accept+"; charset=utf-8" {
+				t.Fatalf("unexpected response: %d %v", w.Code, w.Header())
+			}
+			if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatal("missing MIME sniffing protection")
+			}
+			body := w.Body.String()
+			escaped := template.HTMLEscapeString(payload)
+			if accept == "text/markdown" {
+				escaped = markdownText(payload)
+			}
+			if strings.Count(body, escaped) != 2 {
+				t.Fatalf("message and description must remain escaped: %s", body)
+			}
+			for _, unsafe := range []string{"<img src=x", "<script>alert", `href="javascript:`, "](<javascript:"} {
+				if strings.Contains(body, unsafe) {
+					t.Errorf("unsafe rendered content: %q", unsafe)
+				}
+			}
+		})
 	}
 }
 
