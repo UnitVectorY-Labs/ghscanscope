@@ -14,6 +14,7 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - Read color-coded CLI output and follow sync progress; set `NO_COLOR` for plain text.
 - Export cached repository findings as plain text or JSON, filtered by priority and scanner.
 - Compare findings by scanner and rule with search, filters, and GitHub links.
+- Read the same web page URLs as concise Markdown with `Accept: text/markdown` ([HTTP usage](docs/USAGE.md#markdown-over-http)).
 
 ## Quick Start
 

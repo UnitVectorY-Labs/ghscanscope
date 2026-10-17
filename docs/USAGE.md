@@ -201,3 +201,63 @@ The header theme toggle switches between light and dark modes and remembers your
 - `0`: command completed successfully
 - `1`: a configuration, flag parsing, database, server, or GitHub API error occurred (also returned for command help)
 - `2`: no command was supplied or the command is unknown
+
+## Markdown over HTTP
+
+The canonical web page URLs also serve Markdown to clients that explicitly
+prefer it in `Accept`. For example, with `ghscanscope web` running locally:
+
+```sh
+curl -i http://127.0.0.1:8080/alerts -H 'Accept: text/markdown'
+curl -i http://127.0.0.1:8080/alerts -H 'Accept: text/html'
+```
+
+Markdown uses `Content-Type: text/markdown; charset=utf-8`. HTML continues to
+use `text/html; charset=utf-8`. All responses include `Vary: Accept` and
+`Cache-Control: private, no-store`; the app has no representation cache or ETags.
+Reverse proxies and CDNs must respect these headers rather than forcing caches
+of these security findings. Conditional requests do not reuse validators from
+another representation.
+
+Negotiation follows media-range specificity and quality values from
+[RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-12.5.1), using the
+[registered Markdown media type](https://www.rfc-editor.org/rfc/rfc7763.html).
+`text/markdown, text/html;q=0.8` selects Markdown;
+`text/html, text/markdown;q=0.5` selects HTML. A Markdown quality of zero excludes
+Markdown. Missing Accept, wildcard-only Accept, equally preferred explicit HTML
+and Markdown, and unsupported formats retain the HTML default. If neither
+format is acceptable, the application disregards Accept and serves HTML instead
+of returning 406. Request `Content-Type` and `User-Agent` do not select formats.
+
+Supported pages are `/alerts`, `/repositories`, `/repositories/{id}`,
+`/rules?tool=…&rule=…`, and `/alerts/{id}`. Their existing query parameters,
+filters, ordering, and contextual back links still apply. `/` still redirects
+to `/alerts`; unknown resources return 404. Application error pages negotiate
+their representation while retaining their HTTP status. HEAD returns the same
+representation headers without a body.
+
+Both renderers use the same prepared page model and data loader. Markdown
+preserves displayed evidence, priorities, counts (matching / total), timestamps,
+scan context, and related links. It omits forms, refresh actions, scripts,
+styles, icons, and filter menus. Scanner-provided text is escaped as literal
+text, matching its treatment in HTML. Displayed scan metadata such as environment
+and analysis key remains available; undisplayed database fields and page state
+are never serialized. Mutations remain POST actions and are never offered as
+GET links. There is currently no pagination in the HTML or Markdown views.
+
+The web server has no built-in login, tenant, or per-resource permission layer:
+like HTML, Markdown can read the cached findings available to the server. Any
+deployment access gate must protect the same canonical routes for all Accept
+values. Closed findings and archived repositories remain excluded by the shared
+loader. Markdown does not call an extra API or perform a refresh.
+
+Internal links use the request host and connection scheme, preserve meaningful
+query parameters, and can be fetched directly. Forwarded headers are not trusted.
+Behind a TLS-terminating reverse proxy, absolute links currently use the origin
+connection's scheme; configurable public-origin support is a useful follow-up
+for such deployments. Preserve the public Host when proxying requests.
+
+All existing content page types have Markdown renderers. Interactive controls
+have no Markdown equivalent; source code remains linked on GitHub rather than
+being downloaded or embedded. The documentation website under `docs/` is hosted
+separately and is outside the Go web server's negotiation.
