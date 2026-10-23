@@ -1,6 +1,7 @@
 name: ghscanscope
 default_branch: main
 config:
+  osv: sarif
   description: "A local-first workbench for syncing, triaging, and finding patterns in GitHub code-scanning alerts across repositories."
   license: MIT
   language: go
