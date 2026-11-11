@@ -3,7 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +38,7 @@ func TestSyncProgressAndSummary(t *testing.T) {
 						a.Repository.FullName = "acme/one"
 						a.Repository.Name = "one"
 						a.Repository.Owner.Login = "acme"
-						json.NewEncoder(w).Encode([]gh.Alert{a})
+						json.MarshalWrite(w, []gh.Alert{a})
 					} else {
 						var repo gh.Repository
 						repo.ID = 1
@@ -46,9 +46,9 @@ func TestSyncProgressAndSummary(t *testing.T) {
 						repo.Name = "one"
 						repo.Owner.Login = "acme"
 						if target == "" {
-							json.NewEncoder(w).Encode([]gh.Repository{repo})
+							json.MarshalWrite(w, []gh.Repository{repo})
 						} else {
-							json.NewEncoder(w).Encode(repo)
+							json.MarshalWrite(w, repo)
 						}
 					}
 				}))

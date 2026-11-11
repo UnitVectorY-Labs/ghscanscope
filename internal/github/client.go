@@ -2,7 +2,7 @@ package github
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -47,10 +47,12 @@ type Alert struct {
 		GUID    string `json:"guid"`
 	} `json:"tool"`
 	Rule struct {
-		ID, Name, Severity string
-		Description        string   `json:"description"`
-		SecuritySeverity   string   `json:"security_severity_level"`
-		Tags               []string `json:"tags"`
+		ID               string   `json:"id"`
+		Name             string   `json:"name"`
+		Severity         string   `json:"severity"`
+		Description      string   `json:"description"`
+		SecuritySeverity string   `json:"security_severity_level"`
+		Tags             []string `json:"tags"`
 	} `json:"rule"`
 	Repository         Repository `json:"repository"`
 	MostRecentInstance struct {
@@ -119,7 +121,7 @@ func (c *Client) get(ctx context.Context, path string, out any) (http.Header, er
 		}
 		return resp.Header, fmt.Errorf("GitHub API %s: %s", resp.Status, message.Message)
 	}
-	return resp.Header, json.NewDecoder(resp.Body).Decode(out)
+	return resp.Header, json.UnmarshalRead(resp.Body, out)
 }
 
 func (c *Client) paginate(ctx context.Context, path string, newPage func() any, appendPage func(any)) error {

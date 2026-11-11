@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -132,9 +133,11 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 	}
 	report.Matching = len(report.Findings)
 	if opts.JSON {
-		encoder := json.NewEncoder(out)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
+		if err := json.MarshalWrite(out, report, jsontext.WithIndent("  "), json.Deterministic(true)); err != nil {
+			return err
+		}
+		_, err := io.WriteString(out, "\n")
+		return err
 	}
 	return writeFindings(out, report, opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0)
 }
