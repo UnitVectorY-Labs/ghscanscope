@@ -95,3 +95,13 @@ descriptions. Zero matching alerts does not establish scan coverage.
 The light theme uses white surfaces with blue and orange accents. The header
 theme toggle switches to dark mode; the preference is remembered in your browser.
 Scanner badges use a muted palette and identify which tool reported each finding.
+
+Ingest the official CISA Known Exploited Vulnerabilities catalog with
+`ghscanscope kev [--db PATH_OR_URL]`. Run it periodically to refresh the cache;
+failed downloads preserve the previous catalog. Findings containing matching CVE
+identifiers in scanner rule IDs, names, descriptions, messages, or tags receive
+CISA KEV badges in the dashboard and KEV metadata in findings JSON.
+Use the dashboard's **KEV** filter or
+`ghscanscope findings --repo OWNER/REPO --kev` to focus on these findings.
+An empty result means no reported CVE matched the cached catalog; scanners may
+not report CVE identifiers. KEV status does not change scanner priority.

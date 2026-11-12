@@ -110,8 +110,8 @@ func TestMigrationsAndBackendContract(t *testing.T) {
 		}
 	}
 	check("status", nil, 0)
-	check("up", nil, 2)
-	check("up", nil, 2)
+	check("up", nil, 3)
+	check("up", nil, 3)
 	org, err := s.EnsureOrg(ctx, "Acme", "https://github.com/Acme", 42)
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +152,7 @@ func TestMigrationsAndBackendContract(t *testing.T) {
 	if err != nil || len(orgs) != 1 || orgs[0].LastSync == nil || orgs[0].LastStatus != "success" {
 		t.Fatalf("orgs=%+v err=%v", orgs, err)
 	}
+	check("down", nil, 2)
 	// A dependent view makes the downgrade fail after its data update. Both
 	// backends must roll back that update and retain migration version 2.
 	if _, err := s.DB.ExecContext(ctx, "CREATE VIEW priority_dependency AS SELECT priority FROM alerts"); err != nil {
@@ -174,7 +175,7 @@ func TestMigrationsAndBackendContract(t *testing.T) {
 	if err := s.DB.QueryRowContext(ctx, "SELECT severity FROM alerts").Scan(&severity); err != nil || severity != "Warning" {
 		t.Fatalf("downgrade severity=%q err=%v", severity, err)
 	}
-	check("up", nil, 2)
+	check("up", nil, 3)
 	alerts, err = s.OpenAlerts(ctx)
 	if err != nil || len(alerts) != 1 || alerts[0].ReportedSeverity != "Warning" || alerts[0].Priority != "Medium" {
 		t.Fatalf("upgrade alerts=%+v err=%v", alerts, err)
@@ -200,7 +201,7 @@ func TestMigrationsAndBackendContract(t *testing.T) {
 	if _, err := s.DB.QueryContext(ctx, "SELECT * FROM alerts"); err == nil {
 		t.Fatal("down to zero retained alerts table")
 	}
-	check("up", nil, 2)
+	check("up", nil, 3)
 	alerts, err = s.OpenAlerts(ctx)
 	if err != nil || len(alerts) != 0 {
 		t.Fatalf("fresh upgrade alerts=%+v err=%v", alerts, err)

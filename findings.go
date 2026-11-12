@@ -39,6 +39,7 @@ func runFindings(ctx context.Context, args []string, out io.Writer) error {
 	var details bool
 	fs.BoolVar(&details, "verbose", false, "print full finding details with or without filters")
 	fs.BoolVar(&details, "details", false, "alias for --verbose")
+	kev := fs.Bool("kev", false, "only findings matching CISA KEV")
 	asJSON := fs.Bool("json", false, "emit full finding records as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -55,7 +56,7 @@ func runFindings(ctx context.Context, args []string, out io.Writer) error {
 			opts.RepoSet = true
 		}
 	})
-	filters := app.FindingsOptions{Levels: levels, Scanners: scanners, Refs: refs, Details: details, JSON: *asJSON}
+	filters := app.FindingsOptions{KEV: *kev, Levels: levels, Scanners: scanners, Refs: refs, Details: details, JSON: *asJSON}
 	if err := filters.Validate(); err != nil {
 		return err
 	}

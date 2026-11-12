@@ -16,6 +16,7 @@ import (
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/app"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/config"
 	"github.com/UnitVectorY-Labs/ghscanscope/internal/console"
+	"github.com/UnitVectorY-Labs/ghscanscope/internal/store"
 )
 
 var Version = "dev"
@@ -47,6 +48,7 @@ func usage() {
 	fmt.Fprintln(out, "  ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]")
 	fmt.Fprintln(out, "  ghscanscope web [--db PATH_OR_URL] [--addr ADDRESS]")
 	fmt.Fprintln(out, "  ghscanscope migrate [--db PATH_OR_URL] up|down|status [VERSION]")
+	fmt.Fprintln(out, "  ghscanscope kev [--db PATH_OR_URL]")
 	fmt.Fprintln(out, "  ghscanscope version")
 }
 
@@ -86,6 +88,26 @@ func main() {
 	defer stop()
 	var err error
 	switch os.Args[1] {
+	case "kev":
+		fs := console.FlagSet("kev")
+		db := fs.String("db", env("GHSCAN_SCOPE_DB", ""), "database path or URL")
+		err = fs.Parse(os.Args[2:])
+		if err == nil {
+			var path string
+			path, err = config.DatabasePath(*db)
+			if err == nil {
+				var s *store.Store
+				s, err = store.OpenContext(ctx, path)
+				if err == nil {
+					defer s.Close()
+					var n int
+					n, err = s.IngestKEV(ctx)
+					if err == nil {
+						fmt.Printf("Ingested %d CISA KEV entries\n", n)
+					}
+				}
+			}
+		}
 	case "version":
 		fmt.Println(console.New().Label(versionString(Version)))
 		return
