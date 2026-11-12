@@ -3,7 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -214,7 +215,7 @@ func TestFindingsColorAndJSON(t *testing.T) {
 	if err := runFindings(context.Background(), []string{"--db", db, "--repo", "Owner/repo", "--json"}, &b); err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid(b.Bytes()) || strings.Contains(b.String(), "\x1b") || strings.Contains(b.String(), `\u001b`) {
+	if !jsontext.Value(b.Bytes()).IsValid() || strings.Contains(b.String(), "\x1b") || strings.Contains(b.String(), `\u001b`) {
 		t.Fatalf("JSON contains color: %s", b.String())
 	}
 }

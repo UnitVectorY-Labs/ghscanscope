@@ -114,3 +114,32 @@ func TestFailedPageDoesNotAdvanceProgress(t *testing.T) {
 		t.Fatalf("failed page emitted progress: %d", calls)
 	}
 }
+
+func TestAlertJSONFieldsAndStrictParsing(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantError bool
+	}{
+		{"rule fields", `[{"number":1,"rule":{"id":"rule-id","name":"rule-name","severity":"error","tags":["security"]}}]`, false},
+		{"duplicate name", `[{"number":1,"number":2}]`, true},
+		{"invalid UTF-8", "[{\"rule\":{\"id\":\"\xff\"}}]", true},
+		{"trailing value", `[] []`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			client := &Client{HTTP: server.Client(), BaseURL: server.URL}
+			alerts, err := client.RepositoryAlerts(context.Background(), "acme", "widget")
+			if (err != nil) != tc.wantError {
+				t.Fatalf("alerts=%+v err=%v", alerts, err)
+			}
+			if !tc.wantError && (len(alerts) != 1 || alerts[0].Rule.ID != "rule-id" || alerts[0].Rule.Name != "rule-name" || alerts[0].Rule.Severity != "error" || len(alerts[0].Rule.Tags) != 1) {
+				t.Fatalf("rule fields lost: %+v", alerts)
+			}
+		})
+	}
+}
