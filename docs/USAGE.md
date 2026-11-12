@@ -18,13 +18,14 @@ permalink: /usage
 
 ```text
 ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL]
-ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--verbose] [--json]
+ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--kev] [--verbose] [--json]
+ghscanscope kev [--db PATH_OR_URL]
 ghscanscope web [--db PATH_OR_URL] [--addr ADDRESS]
 ghscanscope migrate [--db PATH_OR_URL] up|down|status [VERSION]
 ghscanscope version
 ```
 
-Use `ghscanscope sync --help`, `ghscanscope findings --help`, `ghscanscope web --help`, or `ghscanscope migrate --help` for flag descriptions. Place flags after the command.
+Use `ghscanscope sync --help`, `ghscanscope findings --help`, `ghscanscope kev --help`, `ghscanscope web --help`, or `ghscanscope migrate --help` for flag descriptions. Place flags after the command.
 
 ### sync
 
@@ -56,6 +57,7 @@ Read one repository's cached open code-scanning findings without contacting GitH
 | `--level` | — | All priorities, including unknown |
 | `--scanner` | — | All scanners |
 | `--ref` | — | All cached refs |
+| `--kev` | — | Off; only findings matching the cached CISA KEV catalog |
 | `--verbose` | — | Off; filters enable detailed text automatically |
 | `--details` | — | Alias for `--verbose` |
 | `--json` | — | Off; when enabled, always includes full finding records |
@@ -81,6 +83,23 @@ This exposes the current cached open alerts and each alert's most recent stored 
 A missing SQLite file or uncached repository produces an error instructing you to sync first. PostgreSQL connection and authentication failures are reported as database errors. A cached repository with no open findings, or a filter with no matches, succeeds with zero counts. Exit status does not depend on finding severity.
 
 Flags override environment variables. An explicit repository overrides checkout detection, and an explicit owner must match the repository owner, ignoring case. A short repository name requires an explicit owner. As with `sync`, an explicit owner alone suppresses checkout detection; `findings` then fails because it requires one repository. Organization directory property files do not select a repository for this command.
+
+### kev
+
+Download the official CISA Known Exploited Vulnerabilities (KEV) catalog into the selected database:
+
+```sh
+ghscanscope kev
+ghscanscope kev --db ./data/alerts.db
+```
+
+`--db` / `GHSCAN_SCOPE_DB` uses the same SQLite path or PostgreSQL URL and default as `sync`. No GitHub credentials are required; this command contacts CISA. A successful download replaces the catalog in one transaction. Failed downloads or invalid catalogs preserve the previous cache. The command prints the number of ingested entries.
+
+Run it periodically (for example, daily); `sync` does not refresh the KEV catalog. Matching uses CVE identifiers found case-insensitively in cached rule IDs, names, descriptions, finding messages, and tags. KEV badges appear on matching findings, groups, and repositories. The dashboard's **KEV** filter combines with other filters; broaden the default priority filter to include lower-priority matches.
+
+`findings --kev` also combines with the other findings filters and enables detailed text. Each JSON finding includes a `kevs` array (`[]` without matches). Entries retain CISA field names: `cveID`, `vendorProject`, `product`, `vulnerabilityName`, `shortDescription`, `dateAdded`, `requiredAction`, `dueDate`, `knownRansomwareCampaignUse`, and `notes`.
+
+KEV status is informational and does not change scanner priority. No matches can mean the catalog has not been loaded, is stale, or the scanner reports no CVE identifiers; it does not establish that findings are unexploited or that scanning is complete.
 
 ### web
 
@@ -164,7 +183,7 @@ The `.git` suffix is optional. Other remote names and hosts are not used for det
 
 ## Database Selection and Location
 
-`--db` / `GHSCAN_SCOPE_DB` accepts either a SQLite path or a `postgres://` / `postgresql://` connection URL. A URL selects PostgreSQL for `sync`, `findings`, `web`, and `migrate`; no filesystem directory is created for a URL. For example:
+`--db` / `GHSCAN_SCOPE_DB` accepts either a SQLite path or a `postgres://` / `postgresql://` connection URL. A URL selects PostgreSQL for `sync`, `findings`, `kev`, `web`, and `migrate`; no filesystem directory is created for a URL. For example:
 
 ```sh
 export GHSCAN_SCOPE_DB='postgresql://scanner@db.example.com/ghscanscope?sslmode=verify-full'

@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,8 +79,11 @@ func (s *Store) IngestKEV(ctx context.Context) (int, error) {
 		if cvePattern.FindString(v.CVE) != v.CVE {
 			return 0, fmt.Errorf("invalid CVE %q", v.CVE)
 		}
-		b, _ := json.Marshal(v)
-		if _, err = tx.ExecContext(ctx, s.sql("INSERT INTO kev(cve,payload) VALUES (?,?)"), v.CVE, string(b)); err != nil {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, s.sql("INSERT INTO kev(cve,payload) VALUES (?,?)"), strings.ToUpper(v.CVE), string(b)); err != nil {
 			return 0, err
 		}
 	}

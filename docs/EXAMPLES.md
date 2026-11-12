@@ -103,6 +103,16 @@ unset GHSCAN_SCOPE_ORG GHSCAN_SCOPE_REPO
 
 These commands read only cached open findings and do not contact GitHub. Refresh with `sync` first when needed. Full records include scanner messages, rule descriptions, file paths and line/column ranges, and revision metadata. A successful export with no findings does not establish scan coverage.
 
+## Highlight Known Exploited Vulnerabilities
+
+```bash
+ghscanscope kev
+ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --kev --json
+ghscanscope web
+```
+
+Use the same `--db` or `GHSCAN_SCOPE_DB` for all commands. Refresh the catalog periodically, separately from `sync`. In the dashboard, select **KEV** and broaden the priority filter if needed. Matches depend on CVE identifiers in scanner findings; an empty result does not establish absence of exploited vulnerabilities. See [KEV usage](USAGE.md#kev) for matching and JSON details.
+
 ## Use a Separate Database
 
 Pass the same database to each command:

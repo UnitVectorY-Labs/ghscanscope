@@ -219,3 +219,33 @@ func TestFindingsColorAndJSON(t *testing.T) {
 		t.Fatalf("JSON contains color: %s", b.String())
 	}
 }
+
+func TestFindingsKEVJSON(t *testing.T) {
+	path := findingsCache(t)
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB.Exec(`INSERT INTO kev(cve,payload) VALUES (?,?)`, "CVE-2023-4863", `{"cveID":"CVE-2023-4863","vulnerabilityName":"WebP"}`)
+	if err == nil {
+		_, err = s.DB.Exec(`UPDATE alerts SET message = ? WHERE github_id = 1`, "CVE-2023-4863")
+	}
+	s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runFindings(context.Background(), []string{"--db", path, "--repo", "Owner/repo", "--kev", "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var report app.FindingsReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Matching != 1 || len(report.Findings[0].KEVs) != 1 || report.Findings[0].KEVs[0].CVE != "CVE-2023-4863" {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+	if !strings.HasSuffix(out.String(), "\n") {
+		t.Fatal("JSON missing final newline")
+	}
+}
