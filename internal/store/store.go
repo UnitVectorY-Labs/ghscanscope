@@ -32,6 +32,7 @@ type Repository struct {
 }
 
 type Alert struct {
+	KEVs                                              []KEV
 	ID, OrgID, RepositoryID, GitHubID                 int64
 	Org, Repository, Tool, RuleID, RuleName, Severity string
 	// Priority is the app's canonical priority. Severity is retained for
@@ -226,5 +227,12 @@ func (s *Store) openAlerts(ctx context.Context, where string, args []any) ([]Ale
 		a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.annotateKEV(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

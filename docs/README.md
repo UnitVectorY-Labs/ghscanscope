@@ -23,6 +23,7 @@ A local-first workbench for syncing, triaging, and finding patterns in GitHub co
 - **Search and filters** — combine repository, scanner, priority, and other filters with bookmarkable URLs
 - **Readable CLI output** — color-coded output with `NO_COLOR` support and live sync progress
 - **CLI exports** — inspect one repository’s cached findings as text or JSON with priority, scanner, and Git ref filters
+- **Known exploited vulnerabilities** — cache the CISA KEV catalog and highlight or filter findings with matching CVE identifiers
 - **Finding details** — inspect messages, locations, scan metadata, and links to GitHub
 - **Local history** — retain alerts that disappear from a successful refresh as non-open history
 - **Light and dark themes** — remember your theme preference in the browser

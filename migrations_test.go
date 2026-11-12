@@ -18,17 +18,17 @@ func TestMigrationCommand(t *testing.T) {
 	}{
 		{[]string{"status"}, "0"},
 		{[]string{"up", "1"}, "1"},
-		{[]string{"up"}, "2"},
-		{[]string{"down"}, "1"},
+		{[]string{"up"}, "3"},
+		{[]string{"down"}, "2"},
 		{[]string{"down", "0"}, "0"},
-		{[]string{"--db", target, "up"}, "2"},
+		{[]string{"--db", target, "up"}, "3"},
 	} {
 		var out bytes.Buffer
 		if err := runMigrate(context.Background(), step.args, &out); err != nil || !strings.Contains(out.String(), "Database version: "+step.version) {
 			t.Fatalf("%v: out=%q err=%v", step.args, out.String(), err)
 		}
 	}
-	for _, args := range [][]string{nil, {"invalid"}, {"status", "1"}, {"up", "-1"}, {"up", "3"}, {"up", "no"}, {"up", "1", "extra"}} {
+	for _, args := range [][]string{nil, {"invalid"}, {"status", "1"}, {"up", "-1"}, {"up", "4"}, {"up", "no"}, {"up", "1", "extra"}} {
 		if err := runMigrate(context.Background(), args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("accepted %v", args)
 		}

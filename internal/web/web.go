@@ -32,6 +32,7 @@ type Stats struct {
 }
 
 type Group struct {
+	KEV                                        bool
 	Totals                                     Stats
 	Tool, RuleID, RuleName, Priority, Severity string
 	RepositoryCount, AlertCount                int
@@ -41,6 +42,7 @@ type Group struct {
 }
 
 type RepoView struct {
+	KEV    bool
 	Totals Stats
 	store.Repository
 	Org                                string
@@ -255,11 +257,16 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 	matchingRepositories := map[int64]bool{}
 	var repositoryViews []RepoView
 	for _, repository := range d.Repositories {
-		if !matchesSearch(filters, repository.FullName, repository.Description) || !matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) || (!matchesRepositoryPriority(filters, severityCounts[repository.ID]) || ((len(filters["tool"]) > 0 || len(filters["rule"]) > 0) && counts[repository.ID] == 0)) {
+		if !matchesSearch(filters, repository.FullName, repository.Description) || !matchesRepository(filters, repository, d.OrgNames[repository.OrgID]) || (!matchesRepositoryPriority(filters, severityCounts[repository.ID]) || ((len(filters["kev"]) > 0 || len(filters["tool"]) > 0 || len(filters["rule"]) > 0) && counts[repository.ID] == 0)) {
 			continue
 		}
 		matchingRepositories[repository.ID] = true
 		view := RepoView{Repository: repository, Org: d.OrgNames[repository.OrgID], AlertCount: counts[repository.ID]}
+		for _, a := range d.Alerts {
+			if a.RepositoryID == view.ID && len(a.KEVs) > 0 {
+				view.KEV = true
+			}
+		}
 		applySeverityCounts(&view, severityCounts[repository.ID])
 		view.Totals = totals[repository.ID]
 		repositoryViews = append(repositoryViews, view)
@@ -401,6 +408,11 @@ func (s *Server) ruleDetail(w http.ResponseWriter, r *http.Request) {
 	for _, repo := range d.Repositories {
 		if counts[repo.ID] > 0 {
 			view := RepoView{Repository: repo, Org: d.OrgNames[repo.OrgID], AlertCount: counts[repo.ID]}
+			for _, a := range d.Alerts {
+				if a.RepositoryID == view.ID && len(a.KEVs) > 0 {
+					view.KEV = true
+				}
+			}
 			applySeverityCounts(&view, severities[repo.ID])
 			view.Totals = totals[repo.ID]
 			page.RuleRepositories = append(page.RuleRepositories, view)
@@ -566,6 +578,9 @@ func groupAlerts(alerts []store.Alert) []Group {
 		group.AlertCount++
 		repositories[key][alert.RepositoryID] = true
 		group.RepositoryCount = len(repositories[key])
+		if len(alert.KEVs) > 0 {
+			group.KEV = true
+		}
 		if severityRank(alert.Priority) > severityRank(group.Priority) {
 			group.Priority = alert.Priority
 			group.Severity = alert.Priority
@@ -583,7 +598,7 @@ func groupAlerts(alerts []store.Alert) []Group {
 
 func queryFilters(r *http.Request) map[string][]string {
 	filters := map[string][]string{}
-	for _, key := range []string{"org", "repo", "priority", "tool", "rule", "visibility", "language", "q"} {
+	for _, key := range []string{"org", "repo", "priority", "tool", "rule", "visibility", "language", "kev", "q"} {
 		for _, value := range r.URL.Query()[key] {
 			if value = strings.TrimSpace(value); value != "" {
 				filters[key] = append(filters[key], value)
@@ -604,7 +619,7 @@ func filterAlerts(d dataSet, filters map[string][]string) []store.Alert {
 }
 
 func matchesAlert(filters map[string][]string, alert store.Alert, repository store.Repository) bool {
-	return allows(filters["org"], alert.Org) && allows(filters["repo"], alert.Repository) &&
+	return (len(filters["kev"]) == 0 || len(alert.KEVs) > 0) && allows(filters["org"], alert.Org) && allows(filters["repo"], alert.Repository) &&
 		allows(filters["priority"], alert.Priority) && allows(filters["tool"], alert.Tool) &&
 		allows(filters["rule"], alert.RuleID) && allows(filters["visibility"], repository.Visibility) &&
 		allows(filters["language"], repository.Language) && matchesSearch(filters, alert.RuleName, alert.RuleID, alert.RuleDescription, alert.Message, alert.Path, alert.Repository, alert.Tool, strings.Join(alert.Tags, " "))
@@ -1114,7 +1129,7 @@ func (s *Server) preparePage(page *Page, r *http.Request, d dataSet) {
 		reset.Set("from", from)
 	}
 	page.ResetURL = r.URL.Path + "?" + reset.Encode()
-	for _, key := range []string{"priority", "tool", "org", "repo", "rule", "visibility", "language", "q"} {
+	for _, key := range []string{"priority", "tool", "org", "repo", "rule", "visibility", "language", "kev", "q"} {
 		for _, value := range page.Filters[key] {
 			remove := cloneValues(values)
 			remove.Del(key)

@@ -18,6 +18,7 @@ import (
 
 type FindingsOptions struct {
 	Levels, Scanners, Refs []string
+	KEV                    bool
 	Details, JSON          bool
 }
 
@@ -33,31 +34,32 @@ func (o FindingsOptions) Validate() error {
 }
 
 type Finding struct {
-	Number           int64     `json:"number"`
-	Priority         string    `json:"priority"`
-	ReportedSeverity string    `json:"reported_severity"`
-	SeveritySource   string    `json:"severity_source"`
-	Scanner          string    `json:"scanner"`
-	ScannerVersion   string    `json:"scanner_version"`
-	ScannerGUID      string    `json:"scanner_guid"`
-	RuleID           string    `json:"rule_id"`
-	RuleName         string    `json:"rule_name"`
-	RuleDescription  string    `json:"rule_description"`
-	Tags             []string  `json:"tags"`
-	Message          string    `json:"message"`
-	Path             string    `json:"path"`
-	StartLine        int       `json:"start_line"`
-	EndLine          int       `json:"end_line"`
-	StartColumn      int       `json:"start_column"`
-	EndColumn        int       `json:"end_column"`
-	Ref              string    `json:"ref"`
-	CommitSHA        string    `json:"commit_sha"`
-	AnalysisKey      string    `json:"analysis_key"`
-	Environment      string    `json:"environment"`
-	Category         string    `json:"category"`
-	URL              string    `json:"url"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	KEVs             []store.KEV `json:"kevs"`
+	Number           int64       `json:"number"`
+	Priority         string      `json:"priority"`
+	ReportedSeverity string      `json:"reported_severity"`
+	SeveritySource   string      `json:"severity_source"`
+	Scanner          string      `json:"scanner"`
+	ScannerVersion   string      `json:"scanner_version"`
+	ScannerGUID      string      `json:"scanner_guid"`
+	RuleID           string      `json:"rule_id"`
+	RuleName         string      `json:"rule_name"`
+	RuleDescription  string      `json:"rule_description"`
+	Tags             []string    `json:"tags"`
+	Message          string      `json:"message"`
+	Path             string      `json:"path"`
+	StartLine        int         `json:"start_line"`
+	EndLine          int         `json:"end_line"`
+	StartColumn      int         `json:"start_column"`
+	EndColumn        int         `json:"end_column"`
+	Ref              string      `json:"ref"`
+	CommitSHA        string      `json:"commit_sha"`
+	AnalysisKey      string      `json:"analysis_key"`
+	Environment      string      `json:"environment"`
+	Category         string      `json:"category"`
+	URL              string      `json:"url"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 type FindingsReport struct {
@@ -114,7 +116,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		return alerts[i].GitHubID < alerts[j].GitHubID
 	})
 	for _, a := range alerts {
-		if !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) || (len(opts.Refs) > 0 && !slices.Contains(opts.Refs, a.Ref)) {
+		if (opts.KEV && len(a.KEVs) == 0) || !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) || (len(opts.Refs) > 0 && !slices.Contains(opts.Refs, a.Ref)) {
 			continue
 		}
 		report.ByLevel[a.Priority]++
@@ -124,7 +126,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 			tags = []string{}
 		}
 		report.Findings = append(report.Findings, Finding{
-			Number: a.GitHubID, Priority: a.Priority, ReportedSeverity: a.ReportedSeverity, SeveritySource: a.SeveritySource,
+			KEVs: a.KEVs, Number: a.GitHubID, Priority: a.Priority, ReportedSeverity: a.ReportedSeverity, SeveritySource: a.SeveritySource,
 			Scanner: a.Tool, ScannerVersion: a.ToolVersion, ScannerGUID: a.ToolGUID, RuleID: a.RuleID, RuleName: a.RuleName,
 			RuleDescription: a.RuleDescription, Tags: tags, Message: a.Message, Path: a.Path, StartLine: a.StartLine, EndLine: a.EndLine,
 			StartColumn: a.StartColumn, EndColumn: a.EndColumn, Ref: a.Ref, CommitSHA: a.CommitSHA, AnalysisKey: a.AnalysisKey,
@@ -139,7 +141,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
-	return writeFindings(out, report, opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0)
+	return writeFindings(out, report, opts.KEV || opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0)
 }
 
 func includes(values []string, value string) bool {
@@ -174,6 +176,9 @@ func writeFindings(out io.Writer, r FindingsReport, details bool) error {
 	if details {
 		for _, f := range r.Findings {
 			fmt.Fprintf(&b, "\n[%s] #%d %s: %s\n", p.Priority(f.Priority), f.Number, p.Color(console.Cyan, f.Scanner), f.RuleID)
+			for _, v := range f.KEVs {
+				fmt.Fprintf(&b, "  CISA KEV: %s — %s\n", v.CVE, v.Name)
+			}
 			fields := []struct{ name, value string }{
 				{"Rule name", f.RuleName}, {"Description", f.RuleDescription}, {"Message", f.Message}, {"Path", f.Path},
 				{"Reported severity", f.ReportedSeverity}, {"Severity source", f.SeveritySource}, {"Tags", strings.Join(f.Tags, ", ")},

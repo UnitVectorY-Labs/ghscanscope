@@ -12,7 +12,7 @@ import (
 )
 
 // LatestVersion is the highest schema version shipped in this binary.
-const LatestVersion int64 = 2
+const LatestVersion int64 = 3
 
 //go:embed schema_sqlite.sql
 var sqliteSchema string
@@ -24,6 +24,7 @@ func (s *Store) migrationProvider() (*goose.Provider, error) {
 	dialect := goose.DialectSQLite3
 	opts := []goose.ProviderOption{goose.WithDisableGlobalRegistry(true), goose.WithGoMigrations(
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: s.createSchema}, &goose.GoFunc{RunTx: dropSchema}),
+		goose.NewGoMigration(3, &goose.GoFunc{RunTx: upKEV}, &goose.GoFunc{RunTx: downKEV}),
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: s.upPriority}, &goose.GoFunc{RunTx: downPriority}),
 	)}
 	if s.postgres {

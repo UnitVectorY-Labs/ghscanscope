@@ -54,7 +54,7 @@ ghscanscope findings --repo UnitVectorY-Labs/ghscanscope --json
 ghscanscope web
 ```
 
-Use the same target for `sync`, `findings`, `web`, and `migrate`. The `.ghscanscope` directory property file configures the organization only; it does not select a database. GitHub credentials and database credentials serve separate purposes. Reading cached findings needs database access but does not require GitHub authentication.
+Use the same target for `sync`, `findings`, `kev`, `web`, and `migrate`. The `.ghscanscope` directory property file configures the organization only; it does not select a database. GitHub credentials and database credentials serve separate purposes. Reading cached findings needs database access but does not require GitHub authentication.
 
 ### SQLite
 
@@ -80,7 +80,7 @@ Back up PostgreSQL using your normal database backup and restore procedures, suc
 
 Schema changes use the maintained [Goose migration library](https://github.com/pressly/goose). Migrations ship inside the binary, so users do not need a separate migration tool or migration files. Both backends use the same numbered migration history and command semantics, with database-specific schema definitions where required.
 
-Normal `sync`, `findings`, and `web` startup automatically applies pending upgrades. This preserves existing SQLite startup behavior, including adopting caches created before migration version tracking. Existing alerts and scanner-reported severity are retained during adoption. Upgrades are recorded once rather than rerunning data backfills on each startup. For a planned rollout, stop other users of the cache, back it up, and apply migrations explicitly before starting the new binary.
+Normal `sync`, `findings`, `kev`, and `web` startup automatically applies pending upgrades. This preserves existing SQLite startup behavior, including adopting caches created before migration version tracking. Existing alerts and scanner-reported severity are retained during adoption. Upgrades are recorded once rather than rerunning data backfills on each startup. For a planned rollout, stop other users of the cache, back it up, and apply migrations explicitly before starting the new binary.
 
 ```sh
 # Uses GHSCAN_SCOPE_DB, or the default SQLite file.
@@ -110,6 +110,9 @@ The current migrations are:
 | --- | --- | --- |
 | 1 | Create the cache tables, or adopt and complete a legacy SQLite schema | Drop all application tables and their cached data |
 | 2 | Store canonical priority alongside reported severity and its source; backfill existing alerts | Restore the reported value to the legacy severity field and remove priority/provenance columns |
+| 3 | Create the shared CISA KEV catalog cache (`kev` table) | Drop the KEV catalog; retain alerts and repositories |
+
+Version 3 stores CVE identifiers and their CISA JSON payloads independently of alert syncs. Refresh with `ghscanscope kev`; findings are matched when read. Downgrading to version 2 removes this catalog; after upgrading again, rerun `kev` to restore matching.
 
 Downgrades are deliberate administrative operations and can lose data. In particular, **`down 0` deletes all cached repositories, alerts, and sync history**. Downgrading version 2 loses explicit severity provenance and priority overrides; reapplying it derives priorities from the reported values. Back up before downgrading. Stop application processes first, and keep them stopped until the schema and binary versions match your intended deployment. Starting this binary again automatically reapplies pending upgrades.
 
