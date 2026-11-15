@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,12 +18,17 @@ import (
 )
 
 type FindingsOptions struct {
-	Levels, Scanners, Refs []string
-	KEV                    bool
-	Details, JSON          bool
+	Levels, Scanners, Refs, Rules, Numbers []string
+	KEV                                    bool
+	Details, JSON                          bool
 }
 
 func (o FindingsOptions) Validate() error {
+	for _, number := range o.Numbers {
+		if n, err := strconv.ParseInt(number, 10, 64); err != nil || n <= 0 {
+			return fmt.Errorf("invalid alert number %q: use a positive integer", number)
+		}
+	}
 	for _, level := range o.Levels {
 		switch strings.ToLower(level) {
 		case "critical", "high", "medium", "low", "unknown":
@@ -116,7 +122,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		return alerts[i].GitHubID < alerts[j].GitHubID
 	})
 	for _, a := range alerts {
-		if (opts.KEV && len(a.KEVs) == 0) || !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) || (len(opts.Refs) > 0 && !slices.Contains(opts.Refs, a.Ref)) {
+		if (opts.KEV && len(a.KEVs) == 0) || !includes(opts.Levels, a.Priority) || !includes(opts.Scanners, a.Tool) || !includes(opts.Rules, a.RuleID) || !includesNumber(opts.Numbers, a.GitHubID) || (len(opts.Refs) > 0 && !slices.Contains(opts.Refs, a.Ref)) {
 			continue
 		}
 		report.ByLevel[a.Priority]++
@@ -141,7 +147,7 @@ func RunFindings(ctx context.Context, dbPath, repository string, opts FindingsOp
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
-	return writeFindings(out, report, opts.KEV || opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0)
+	return writeFindings(out, report, opts.KEV || opts.Details || len(opts.Levels) > 0 || len(opts.Scanners) > 0 || len(opts.Refs) > 0 || len(opts.Rules) > 0 || len(opts.Numbers) > 0)
 }
 
 func includes(values []string, value string) bool {
@@ -198,4 +204,17 @@ func writeFindings(out io.Writer, r FindingsReport, details bool) error {
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+func includesNumber(values []string, number int64) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, value := range values {
+		n, _ := strconv.ParseInt(value, 10, 64)
+		if n == number {
+			return true
+		}
+	}
+	return false
 }

@@ -57,6 +57,7 @@ type countComparison struct{ Shown, Total int }
 type severityCounts struct{ Critical, High, Medium, Low, Other int }
 
 type Page struct {
+	FindingsCommand                                                     string
 	TotalGroups                                                         int
 	View, Title, Eyebrow, Notice, Version, ErrorMessage                 string
 	Action, ResetURL, CurrentURL, BackURL, BackLabel, Query, RefreshURL string
@@ -1091,6 +1092,7 @@ func effectiveQuery(r *http.Request, filters map[string][]string) url.Values {
 	return values
 }
 func (s *Server) preparePage(page *Page, r *http.Request, d dataSet) {
+	page.FindingsCommand = findingsCommand(*page)
 	page.Action = r.URL.Path
 	refresh := *r.URL
 	refresh.Path += "/sync"

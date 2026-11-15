@@ -18,7 +18,7 @@ permalink: /usage
 
 ```text
 ghscanscope sync [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL]
-ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--kev] [--verbose] [--json]
+ghscanscope findings [--org ORG] [--repo OWNER/REPO] [--db PATH_OR_URL] [--level LEVEL] [--scanner NAME] [--ref REF] [--rule ID] [--number NUMBER] [--kev] [--verbose] [--json]
 ghscanscope kev [--db PATH_OR_URL]
 ghscanscope web [--db PATH_OR_URL] [--addr ADDRESS]
 ghscanscope migrate [--db PATH_OR_URL] up|down|status [VERSION]
@@ -57,6 +57,8 @@ Read one repository's cached open code-scanning findings without contacting GitH
 | `--level` | — | All priorities, including unknown |
 | `--scanner` | — | All scanners |
 | `--ref` | — | All cached refs |
+| `--rule` | — | All rule IDs; exact name ignoring case; repeat or comma-separate |
+| `--number` | — | All repository GitHub alert numbers; positive integers; repeat or comma-separate |
 | `--kev` | — | Off; only findings matching the cached CISA KEV catalog |
 | `--verbose` | — | Off; filters enable detailed text automatically |
 | `--details` | — | Alias for `--verbose` |
@@ -64,7 +66,7 @@ Read one repository's cached open code-scanning findings without contacting GitH
 
 With no filters, text output summarizes the repository, metadata cache timestamp, matching and total open counts, priority counts, and scanner counts. Use `--verbose` to print all finding details with or without filters (`--details` is also accepted). Supplying any filter also prints detailed findings. JSON always contains full records, even without filters; `--verbose` and `--details` do not change JSON output.
 
-`--level` accepts `critical`, `high`, `medium`, `low`, and `unknown`. These are the same canonical priorities used by the web view: scanner `error` maps to high, `warning` to medium, and `note`/`recommendation` to low. The original reported severity and its source are retained in each finding. `--scanner` matches the complete cached tool name (for example, `CodeQL` or `Semgrep OSS`). Both filters ignore case, accept repeated flags or comma-separated values, and select any listed value within a filter. `--ref` matches the exact full cached Git ref, such as `refs/heads/main`, and is case-sensitive because Git refs can differ by case. It also accepts repeated flags or comma-separated values; any listed ref may match. Level, scanner, and ref filters are combined with AND. This filters each alert's most recent cached instance; other ref instances are not stored separately.
+`--level` accepts `critical`, `high`, `medium`, `low`, and `unknown`. These are the same canonical priorities used by the web view: scanner `error` maps to high, `warning` to medium, and `note`/`recommendation` to low. The original reported severity and its source are retained in each finding. `--scanner` matches the complete cached tool name (for example, `CodeQL` or `Semgrep OSS`). Both filters ignore case, accept repeated flags or comma-separated values, and select any listed value within a filter. `--ref` matches the exact full cached Git ref, such as `refs/heads/main`, and is case-sensitive because Git refs can differ by case. It also accepts repeated flags or comma-separated values; any listed ref may match. Level, scanner, ref, rule, and alert-number filters are combined with AND. This filters each alert's most recent cached instance; other ref instances are not stored separately.
 
 ```sh
 ghscanscope findings
@@ -210,6 +212,14 @@ Open an issue group to compare affected repositories and inspect individual occu
 Aggregate counts show **matching / total before filters**, including priority breakdowns. Listing totals cover all cached open findings; detail-page totals cover the selected repository or scanner rule. Repository search matches names and descriptions. Zero matching alerts does not establish scan coverage.
 
 The header theme toggle switches between light and dark modes and remembers your preference in the browser. Scanner badges identify the tool that reported each finding.
+
+### Copy dashboard commands
+
+Repository details, issue groups across repositories, and individual occurrences show a monospace `findings` command near the top with a copy button. Overview lists do not show this block. Commands include `--verbose` so running them prints the finding details.
+
+Issue groups use one command per affected repository; copying copies all lines. Priority, scanner, rule, and KEV filters carry over. Repository metadata filters determine which repositories are included. Search results (and scanner/rule names containing commas) use `--number` to select the currently matching alert numbers. Empty filtered views have no command block. Individual occurrences use their repository and GitHub alert number, independent of navigation filters.
+
+These POSIX shell commands work across independently synced databases, including on different computers: repository names, scanner/rule IDs, and repository-scoped GitHub alert numbers identify findings, rather than local database row IDs. Set `GHSCAN_SCOPE_DB` or add `--db` to each command to select a custom database on the destination computer. Database paths and credentials are not included in the page. Matching results require the same cached open alerts and relevant KEV catalog data; different sync times, permissions, or closed alerts can change the results. Search-based commands retain the alert numbers selected when copied rather than re-running the search. Rule and number filters combine with other filters using AND; any repeated value within a filter may match.
 
 ## Authentication
 
