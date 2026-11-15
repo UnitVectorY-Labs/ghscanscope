@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -247,5 +248,112 @@ func TestFindingsKEVJSON(t *testing.T) {
 	}
 	if !strings.HasSuffix(out.String(), "\n") {
 		t.Fatal("JSON missing final newline")
+	}
+}
+
+func TestFindingsRuleAndNumberFilters(t *testing.T) {
+	db := findingsCache(t)
+	for _, tc := range []struct {
+		args     []string
+		matching int
+	}{
+		{[]string{"--rule", "rule/test", "--number", "1,3"}, 2},
+		{[]string{"--rule", "missing"}, 0},
+		{[]string{"--number", "006"}, 0},
+		{[]string{"--number", "003", "--level", "medium"}, 1},
+		{[]string{"--number", "1", "--number", "2", "--scanner", "CodeQL"}, 1},
+	} {
+		var out bytes.Buffer
+		args := append([]string{"--db", db, "--repo", "Owner/repo", "--org", "Owner", "--json"}, tc.args...)
+		if err := runFindings(context.Background(), args, &out); err != nil {
+			t.Fatal(err)
+		}
+		var report app.FindingsReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.Matching != tc.matching {
+			t.Errorf("%v: got %d, want %d", tc.args, report.Matching, tc.matching)
+		}
+	}
+	for _, value := range []string{"0", "-1", "abc", "9223372036854775808"} {
+		if err := runFindings(context.Background(), []string{"--number", value}, &bytes.Buffer{}); err == nil {
+			t.Errorf("accepted number %q", value)
+		}
+	}
+}
+
+func TestFindingsCommandsAcrossIndependentCaches(t *testing.T) {
+	ctx := context.Background()
+	var paths []string
+	var localAlertIDs, localRepoIDs []int64
+	for computer := range 2 {
+		path := filepath.Join(t.TempDir(), "cache.db")
+		paths = append(paths, path)
+		s, err := store.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { s.Close() })
+		orgID, err := s.EnsureOrg(ctx, "Owner", "https://github.com/Owner", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A different sync order on the second computer allocates different local
+		// repository and alert IDs before the shared repository is synchronized.
+		if computer == 1 {
+			otherID, err := s.UpsertRepository(ctx, store.Repository{OrgID: orgID, GitHubID: 2, Owner: "Owner", Name: "other", FullName: "Owner/other"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReplaceOpenAlerts(ctx, orgID, &otherID, []store.Alert{{OrgID: orgID, RepositoryID: otherID, GitHubID: 42, Tool: "CodeQL", RuleID: "go/test", Severity: "high"}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		repoID, err := s.UpsertRepository(ctx, store.Repository{OrgID: orgID, GitHubID: 3, Owner: "Owner", Name: "repo", FullName: "Owner/repo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+		if err := s.ReplaceOpenAlerts(ctx, orgID, &repoID, []store.Alert{
+			{OrgID: orgID, RepositoryID: repoID, GitHubID: 42, Tool: "CodeQL", RuleID: "go/test", Severity: "low", Message: "Shared finding", CreatedAt: now, UpdatedAt: now},
+			{OrgID: orgID, RepositoryID: repoID, GitHubID: 43, Tool: "CodeQL", RuleID: "go/other", Severity: "high", CreatedAt: now, UpdatedAt: now},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		alerts, err := s.RepositoryAlerts(ctx, "Owner/repo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, alert := range alerts {
+			if alert.GitHubID == 42 {
+				localAlertIDs = append(localAlertIDs, alert.ID)
+			}
+		}
+		localRepoIDs = append(localRepoIDs, repoID)
+	}
+	if len(localAlertIDs) != 2 || localAlertIDs[0] == localAlertIDs[1] || localRepoIDs[0] == localRepoIDs[1] {
+		t.Fatal("independent caches must have different local IDs")
+	}
+	for _, selection := range [][]string{{"--number", "42"}, {"--scanner", "CodeQL", "--rule", "go/test"}, {"--number", "42", "--level", "low"}} {
+		var previous []app.Finding
+		for _, path := range paths {
+			var out bytes.Buffer
+			args := append([]string{"--repo", "Owner/repo", "--org", "Owner", "--verbose", "--json", "--db", path}, selection...)
+			if err := runFindings(ctx, args, &out); err != nil {
+				t.Fatal(err)
+			}
+			var report app.FindingsReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+			if report.Matching != 1 || report.Findings[0].Number != 42 {
+				t.Fatalf("%v: unexpected selection: %+v", selection, report)
+			}
+			if previous != nil && !reflect.DeepEqual(previous, report.Findings) {
+				t.Fatalf("%v: results differ across computers", selection)
+			}
+			previous = report.Findings
+		}
 	}
 }

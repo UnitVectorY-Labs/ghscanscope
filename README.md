@@ -92,6 +92,10 @@ totals cover all cached open findings; detail-page totals cover the
 selected repository or scanner rule. Repository search matches names and
 descriptions. Zero matching alerts does not establish scan coverage.
 
+Drill into a repository, issue group, or individual occurrence to copy the equivalent
+`findings` command from the dashboard. Issue groups provide one command per repository;
+the commands also work with independently synced databases on other computers.
+
 The light theme uses white surfaces with blue and orange accents. The header
 theme toggle switches to dark mode; the preference is remembered in your browser.
 Scanner badges use a muted palette and identify which tool reported each finding.
