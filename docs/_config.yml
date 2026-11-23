@@ -1,9 +1,13 @@
 title: ghscanscope
 description: "A local-first workbench for syncing, triaging, and finding patterns in GitHub code-scanning alerts across repositories."
 
-remote_theme: UnitVectorY-Labs/uvy-docs-theme@v0.2.0
+remote_theme: UnitVectorY-Labs/uvy-docs-theme@v0.4.0
 plugins:
   - jekyll-remote-theme
+
+uvy_docs:
+  license: "MIT License"
+  license_url: "https://github.com/UnitVectorY-Labs/ghscanscope/blob/main/LICENSE"
 
 callouts:
   highlight:
