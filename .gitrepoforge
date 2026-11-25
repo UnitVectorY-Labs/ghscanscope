@@ -9,8 +9,6 @@ config:
   justfile: true
   status: active
   release_github: true
-  codecov:
-    enabled: false
   gitignore:
     - '*.db'
     - '.ghscanscope.db-shm'
