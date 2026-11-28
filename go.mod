@@ -7,7 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/pressly/goose/v3 v3.30.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
